@@ -102,17 +102,15 @@ export async function candidateRoutes(app: FastifyInstance) {
       });
     }
 
-    const { firstName, lastName, name, ...rest } = parsed.data;
-    const fullName = name || `${firstName} ${lastName}`.trim();
+    const { name, ...rest } = parsed.data;
+    const fullName = name || '';
 
     const candidate = await prisma.candidate.create({
       data: {
         ...rest,
         name: fullName,
-        firstName: firstName || fullName.split(' ')[0],
-        lastName: lastName || fullName.split(' ').slice(1).join(' '),
-        initials: fullName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2),
-        avatarColor: getRandomColor(),
+        firstName: fullName.split(' ')[0] || '',
+        lastName: fullName.split(' ').slice(1).join(' ') || '',
       },
       include: { job: true },
     });

@@ -17,7 +17,9 @@ export async function uploadRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'No file uploaded' });
     }
 
-    const { candidateId, type } = data.fields as { candidateId: string; type: string };
+    const fields = data.fields as unknown as Record<string, string>;
+    const candidateId = fields.candidateId;
+    const type = fields.type;
     
     const parsed = uploadDocumentSchema.safeParse({ candidateId, type });
     if (!parsed.success) {
@@ -45,11 +47,21 @@ export async function uploadRoutes(app: FastifyInstance) {
     let extractedText = '';
     try {
       if (data.mimetype === 'application/pdf') {
-        const pdfBuffer = await data.file;
+        const fileStream = await data.file;
+        const chunks: Buffer[] = [];
+        for await (const chunk of fileStream) {
+          chunks.push(chunk);
+        }
+        const pdfBuffer = Buffer.concat(chunks);
         const pdfData = await pdfParse(pdfBuffer);
         extractedText = pdfData.text;
       } else if (data.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-        const docBuffer = await data.file;
+        const fileStream = await data.file;
+        const chunks: Buffer[] = [];
+        for await (const chunk of fileStream) {
+          chunks.push(chunk);
+        }
+        const docBuffer = Buffer.concat(chunks);
         const result = await mammoth.extractRawText({ buffer: docBuffer });
         extractedText = result.value;
       }
@@ -134,7 +146,7 @@ async function processDocumentAsync(
     });
 
     // Import AI service dynamically to avoid circular dependencies
-    const { aiService } = await import('../services/aiService.js');
+    const aiService = await import('../services/aiService.js');
     
     // Process document with AI
     await aiService.processDocument(documentId, candidateId, jobId, text, documentType);

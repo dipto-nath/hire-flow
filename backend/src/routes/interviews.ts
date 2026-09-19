@@ -142,7 +142,7 @@ export async function interviewRoutes(app: FastifyInstance) {
       });
     }
 
-    const updateData = { ...parsed.data };
+    const updateData: Record<string, any> = { ...parsed.data };
     if (updateData.scheduledAt) updateData.scheduledAt = new Date(updateData.scheduledAt);
     if (updateData.completedAt) updateData.completedAt = new Date(updateData.completedAt);
 
@@ -156,8 +156,8 @@ export async function interviewRoutes(app: FastifyInstance) {
       const statusMap: Record<string, string> = {
         scheduled: 'scheduled',
         in_progress: 'interview',
-        completed: 'evaluation',
-        cancelled: 'scheduled',
+        completed: 'completed',
+        cancelled: 'cancelled',
       };
       await prisma.candidate.update({
         where: { id: interview.candidateId },
@@ -190,7 +190,7 @@ export async function interviewRoutes(app: FastifyInstance) {
       await prisma.interview.update({ where: { id }, data: { status: 'in_progress' } });
       await prisma.candidate.update({
         where: { id: interview.candidateId },
-        data: { interviewStatus: 'interview' },
+        data: { interviewStatus: 'in_progress' },
       });
     }
 
@@ -212,7 +212,16 @@ export async function interviewRoutes(app: FastifyInstance) {
   // POST /api/interviews/:id/summary - Create/update interview summary
   app.post('/:id/summary', async (request, reply) => {
     const { id } = request.params as InterviewParams;
-    const { keyEvidence, requirementCoverage, strongEvidence, unresolvedQuestions, contradictions, followUpNeeded } = request.body;
+    const body = request.body as {
+      keyEvidence?: string[];
+      requirementCoverage?: Array<{ requirementId: string; label: string; status: 'covered' | 'partial' | 'not_covered' }>;
+      strongEvidence?: string[];
+      unresolvedQuestions?: string[];
+      contradictions?: string[];
+      followUpNeeded?: string[];
+    };
+
+    const { keyEvidence, requirementCoverage, strongEvidence, unresolvedQuestions, contradictions, followUpNeeded } = body;
 
     const summary = await prisma.interviewSummary.upsert({
       where: { interviewId: id },

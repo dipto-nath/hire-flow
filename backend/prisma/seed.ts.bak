@@ -53,6 +53,8 @@ You will own the frontend architecture for our core product surfaces, contribute
       group: 'strong_match' as const,
       requirementCoverage: 85,
       validationNeeded: false,
+      initials: 'AM',
+      avatarColor: '#3730a3',
     },
     {
       name: 'Sophie Chen',
@@ -69,6 +71,8 @@ You will own the frontend architecture for our core product surfaces, contribute
       group: 'potential_match' as const,
       requirementCoverage: 60,
       validationNeeded: true,
+      initials: 'SC',
+      avatarColor: '#0369a1',
     },
     {
       name: 'Marcos Silva',
@@ -85,6 +89,8 @@ You will own the frontend architecture for our core product surfaces, contribute
       group: 'potential_match' as const,
       requirementCoverage: 70,
       validationNeeded: true,
+      initials: 'MS',
+      avatarColor: '#065f46',
     },
   ];
 

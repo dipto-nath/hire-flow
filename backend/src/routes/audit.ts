@@ -99,7 +99,17 @@ export async function auditRoutes(app: FastifyInstance) {
 
   // POST /api/audit - Create manual audit event
   app.post('/', async (request, reply) => {
-    const { candidateId, jobId, insight, source, sourceLabel, action, evidenceTrace } = request.body;
+    const body = request.body as {
+      candidateId: string;
+      jobId?: string;
+      insight: string;
+      source: string;
+      sourceLabel: string;
+      action: string;
+      evidenceTrace?: any;
+    };
+    
+    const { candidateId, jobId, insight, source, sourceLabel, action, evidenceTrace } = body;
 
     if (!candidateId || !insight || !source || !sourceLabel || !action) {
       return reply.status(400).send({ error: 'Missing required fields' });
@@ -115,7 +125,7 @@ export async function auditRoutes(app: FastifyInstance) {
         jobId,
         jobTitle: job?.title,
         insight,
-        source,
+        source: source as any,
         sourceLabel,
         generatedBy: 'recruiter',
         action,

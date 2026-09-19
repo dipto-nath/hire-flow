@@ -12,7 +12,7 @@ import {
   SynthesizeInterviewInput,
   GenerateEvaluationInput,
 } from '../schemas/index.js';
-import { aiService } from '../services/aiService.js';
+import * as aiService from '../services/aiService.js';
 
 export async function aiRoutes(app: FastifyInstance) {
   // POST /api/ai/map-candidate - Map candidate to job requirements
@@ -46,7 +46,7 @@ export async function aiRoutes(app: FastifyInstance) {
         resumeDoc.id,
         candidate.id,
         candidate.jobId,
-        resumeDoc.extractedText,
+        resumeDoc.extractedText || '',
         'resume'
       );
 

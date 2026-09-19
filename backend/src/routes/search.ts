@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../config/database.js';
 import { searchSchema, auditFiltersSchema, SearchInput, AuditFiltersInput } from '../schemas/index.js';
-import { aiService } from '../services/aiService.js';
+import * as aiService from '../services/aiService.js';
 
 export async function searchRoutes(app: FastifyInstance) {
   // POST /api/search - Natural language search
@@ -56,7 +56,7 @@ export async function searchRoutes(app: FastifyInstance) {
     
     candidates.forEach(c => {
       c.skills.forEach(s => skills.add(s));
-      roles.add(c.currentRole);
+      if (c.currentRole) roles.add(c.currentRole);
     });
 
     return {

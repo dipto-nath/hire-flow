@@ -8,12 +8,13 @@ import {
   UpdateJobInput,
   JobParams 
 } from '../schemas/index.js';
+import { JobStatus } from '@prisma/client';
 
 export async function jobRoutes(app: FastifyInstance) {
   // GET /api/jobs - List all jobs
   app.get('/', async (request) => {
     const { status, limit = 50, offset = 0 } = request.query as { 
-      status?: string; 
+      status?: JobStatus; 
       limit?: number; 
       offset?: number; 
     };
@@ -39,8 +40,8 @@ export async function jobRoutes(app: FastifyInstance) {
     return {
       jobs: jobs.map(job => ({
         ...job,
-        candidateCount: job._count.candidates,
-        interviewCount: job._count.interviews,
+        candidateCount: job._count?.candidates ?? 0,
+        interviewCount: job._count?.interviews ?? 0,
       })),
       total,
       limit,
@@ -105,7 +106,6 @@ export async function jobRoutes(app: FastifyInstance) {
     // Create audit event
     await prisma.auditEvent.create({
       data: {
-        candidateId: '', // Will be updated when candidates are added
         candidateName: 'System',
         jobId: job.id,
         jobTitle: job.title,
