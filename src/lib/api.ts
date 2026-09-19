@@ -80,6 +80,7 @@ export const api = {
         throw new Error(errorData?.error || `Upload failed: ${res.status}`);
       }
       return res.json();
-    }
+    },
+    getQueueStatus: () => fetchAPI('/api/upload/queue/status'),
   }
 };

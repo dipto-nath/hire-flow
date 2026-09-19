@@ -15,10 +15,12 @@ export async function jobRoutes(app: FastifyInstance) {
   app.get('/', async (request) => {
     const { status, limit = 50, offset = 0 } = request.query as { 
       status?: JobStatus; 
-      limit?: number; 
-      offset?: number; 
+      limit?: string; 
+      offset?: string; 
     };
     
+    const parsedLimit = limit ? parseInt(limit, 10) : 50;
+    const parsedOffset = offset ? parseInt(offset, 10) : 0;
     const where = status ? { status } : {};
     
     const [jobs, total] = await Promise.all([
@@ -31,8 +33,8 @@ export async function jobRoutes(app: FastifyInstance) {
           },
         },
         orderBy: { createdAt: 'desc' },
-        take: limit,
-        skip: offset,
+        take: parsedLimit,
+        skip: parsedOffset,
       }),
       prisma.job.count({ where }),
     ]);
@@ -44,8 +46,8 @@ export async function jobRoutes(app: FastifyInstance) {
         interviewCount: job._count?.interviews ?? 0,
       })),
       total,
-      limit,
-      offset,
+      limit: parsedLimit,
+      offset: parsedOffset,
     };
   });
 

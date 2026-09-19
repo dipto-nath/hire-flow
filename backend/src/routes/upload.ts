@@ -9,6 +9,71 @@ import { randomUUID } from 'crypto';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 
+// ─── Document Processing Queue (Concurrency Control) ──────────────────────────────
+// Processes 1 document at a time with 20-second delay between each to respect
+// Gemini Free Tier rate limit of 5 requests/minute (each doc needs ~3 requests)
+
+interface QueuedDocument {
+  documentId: string;
+  candidateId: string;
+  jobId: string;
+  filePath: string;
+  mimeType: string;
+  documentType: string;
+}
+
+const documentQueue: QueuedDocument[] = [];
+let isProcessingQueue = false;
+
+const DELAY_BETWEEN_DOCUMENTS_MS = 20000; // 20 seconds
+
+async function processQueue() {
+  if (isProcessingQueue || documentQueue.length === 0) {
+    return;
+  }
+
+  isProcessingQueue = true;
+  console.log(`[Queue] Starting processing. ${documentQueue.length} document(s) in queue.`);
+
+  while (documentQueue.length > 0) {
+    const queuedDoc = documentQueue.shift()!;
+    console.log(`[Queue] Processing document ${queuedDoc.documentId} (${documentQueue.length} remaining)`);
+    
+    try {
+      await processDocumentAsync(
+        queuedDoc.documentId,
+        queuedDoc.candidateId,
+        queuedDoc.jobId,
+        queuedDoc.filePath,
+        queuedDoc.mimeType,
+        queuedDoc.documentType
+      );
+    } catch (error) {
+      console.error(`[Queue] Failed to process document ${queuedDoc.documentId}:`, error);
+    }
+
+    // Delay before processing next document to respect rate limits
+    if (documentQueue.length > 0) {
+      console.log(`[Queue] Waiting ${DELAY_BETWEEN_DOCUMENTS_MS}ms before next document...`);
+      await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_DOCUMENTS_MS));
+    }
+  }
+
+  isProcessingQueue = false;
+  console.log('[Queue] All documents processed.');
+}
+
+function enqueueDocument(doc: QueuedDocument) {
+  documentQueue.push(doc);
+  console.log(`[Queue] Document ${doc.documentId} enqueued. Queue length: ${documentQueue.length}`);
+  
+  // Trigger queue processing if not already running
+  if (!isProcessingQueue) {
+    // Use setImmediate to avoid blocking the response
+    setImmediate(() => processQueue());
+  }
+}
+
 export async function uploadRoutes(app: FastifyInstance) {
   // POST /api/upload/document - Upload candidate document
   app.post('/document', async (request, reply) => {
@@ -81,8 +146,15 @@ export async function uploadRoutes(app: FastifyInstance) {
       });
     }
 
-    // Trigger AI processing (async)
-    processDocumentAsync(document.id, candidateId, candidate.jobId, filePath, data.mimetype, parsed.data.type);
+    // Enqueue document for sequential AI processing (respects Gemini rate limits)
+    enqueueDocument({
+      documentId: document.id,
+      candidateId,
+      jobId: candidate.jobId,
+      filePath,
+      mimeType: data.mimetype,
+      documentType: parsed.data.type,
+    });
 
     return reply.status(201).send(document);
   });
@@ -119,6 +191,50 @@ export async function uploadRoutes(app: FastifyInstance) {
     await prisma.candidateDocument.delete({ where: { id } });
 
     return { success: true };
+  });
+
+  // GET /api/upload/queue/status - Get processing queue status
+  app.get('/queue/status', async () => {
+    return {
+      queueLength: documentQueue.length,
+      isProcessing: isProcessingQueue,
+      queuedDocuments: documentQueue.map(d => ({
+        documentId: d.documentId,
+        candidateId: d.candidateId,
+        documentType: d.documentType,
+      })),
+    };
+  });
+
+  // POST /api/upload/queue/requeue - Re-queue stuck documents
+  app.post('/queue/requeue', async (request, reply) => {
+    const { documentIds } = request.body as { documentIds: string[] };
+    
+    if (!documentIds || !Array.isArray(documentIds) || documentIds.length === 0) {
+      return reply.status(400).send({ error: 'documentIds array is required' });
+    }
+
+    const docs = await prisma.candidateDocument.findMany({
+      where: { id: { in: documentIds } },
+      include: { candidate: { select: { id: true, jobId: true } } }
+    });
+
+    let requeued = 0;
+    for (const doc of docs) {
+      if (doc.candidate && doc.filePath) {
+        enqueueDocument({
+          documentId: doc.id,
+          candidateId: doc.candidateId,
+          jobId: doc.candidate.jobId,
+          filePath: doc.filePath,
+          mimeType: doc.type === 'resume' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          documentType: doc.type,
+        });
+        requeued++;
+      }
+    }
+
+    return { requeued, total: documentIds.length };
   });
 }
 

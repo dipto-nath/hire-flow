@@ -24,7 +24,7 @@ function getRandomColor(): string {
 export async function candidateRoutes(app: FastifyInstance) {
   // GET /api/candidates - List all candidates (with optional jobId filter)
   app.get('/', async (request) => {
-    const { jobId, stage, group, limit = 50, offset = 0 } = request.query as {
+    const { jobId, stage, group, limit = '50', offset = '0' } = request.query as {
       jobId?: string;
       stage?: string;
       group?: string;
@@ -32,8 +32,8 @@ export async function candidateRoutes(app: FastifyInstance) {
       offset?: string;
     };
 
-    const parsedLimit = limit ? (typeof limit === 'string' ? parseInt(limit, 10) : limit) : 50;
-    const parsedOffset = offset ? parseInt(offset, 10) : 0;
+    const parsedLimit = parseInt(limit, 10) || 50;
+    const parsedOffset = parseInt(offset, 10) || 0;
 
     const where: any = {};
     if (jobId) where.jobId = jobId;

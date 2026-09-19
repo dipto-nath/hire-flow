@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, X, FileText, Loader2, AlertCircle } from 'lucide-react';
+import { Upload, X, FileText, Loader2, AlertCircle, Clock, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from './index';
 import { api } from '@/lib/api';
 
@@ -19,12 +19,60 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
   
   const [jobs, setJobs] = useState<any[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>(initialJobId || '');
+  
+  // Queue status polling
+  const [showQueueStatus, setShowQueueStatus] = useState(false);
+  const [queueStatus, setQueueStatus] = useState<{
+    queueLength: number;
+    isProcessing: boolean;
+    queuedDocuments: Array<{ documentId: string; candidateId: string; documentType: string }>;
+  } | null>(null);
+  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (isOpen && !initialJobId) {
       api.jobs.list().then(res => setJobs(res.jobs || [])).catch(console.error);
     }
   }, [isOpen, initialJobId]);
+
+  // Poll queue status when showQueueStatus is true
+  useEffect(() => {
+    if (showQueueStatus) {
+      const poll = async () => {
+        try {
+          const status = await api.upload.getQueueStatus();
+          setQueueStatus(status);
+          
+          // Stop polling when queue is empty and not processing
+          if (status.queueLength === 0 && !status.isProcessing) {
+            stopPolling();
+            // Give a moment for the last status to show, then auto-close
+            setTimeout(() => {
+              onUploadComplete();
+              onClose();
+            }, 2000);
+          }
+        } catch (err) {
+          console.error('Failed to fetch queue status:', err);
+        }
+      };
+      
+      poll(); // Initial fetch
+      const interval = setInterval(poll, 3000); // Poll every 3 seconds
+      setPollingInterval(interval);
+    }
+    
+    return () => {
+      if (pollingInterval) clearInterval(pollingInterval);
+    };
+  }, [showQueueStatus, pollingInterval, onUploadComplete, onClose]);
+
+  const stopPolling = () => {
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      setPollingInterval(null);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -96,19 +144,18 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
           throw new Error(`Failed to initialize candidate record for ${file.name}`);
         }
 
-        // 2. Upload the document to trigger AI processing
+        // 2. Upload the document to trigger AI processing (will be queued)
         await api.upload.document(file, candidateRes.id, 'resume');
       }));
 
-      // 3. Complete
-      onUploadComplete();
-      onClose();
-      setFiles([]);
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'An error occurred during upload.');
-    } finally {
+      // 3. Upload complete - show queue status
       setUploading(false);
+      setShowQueueStatus(true);
+      setFiles([]); // Clear files after successful upload
+      
+    } catch (err) {
+      setUploading(false);
+      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
     }
   };
 
@@ -221,7 +268,7 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
               ))}
               {!uploading && (
                 <Button 
-                  variant="outline" 
+                  variant="ghost" 
                   onClick={() => fileInputRef.current?.click()}
                   style={{ marginTop: 8 }}
                 >
@@ -273,20 +320,120 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
             </div>
           )}
 
+          {/* Queue Status Display */}
+          {showQueueStatus && queueStatus && (
+            <div style={{
+              marginTop: 16, padding: 16, borderRadius: 10,
+              background: 'var(--bg-surface)', border: '1px solid var(--border-default)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: 'var(--accent)' }} />
+                  <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                    Processing Documents
+                  </span>
+                </div>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                  {queueStatus.isProcessing ? 'Active' : 'Idle'}
+                </span>
+              </div>
+              
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Queue Position</span>
+                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                    {queueStatus.queueLength} document{queueStatus.queueLength !== 1 ? 's' : ''} waiting
+                  </span>
+                </div>
+                <div style={{
+                  height: 8, borderRadius: 4,
+                  background: 'var(--bg-muted)', overflow: 'hidden'
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: queueStatus.isProcessing ? '30%' : '0%',
+                    background: 'linear-gradient(90deg, var(--accent), var(--accent-light))',
+                    borderRadius: 4,
+                    transition: 'width 0.3s ease',
+                    animation: queueStatus.isProcessing ? 'pulse 1.5s ease-in-out infinite' : 'none'
+                  }} />
+                </div>
+              </div>
+
+              {queueStatus.queuedDocuments.length > 0 && (
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ 
+                    cursor: 'pointer', 
+                    fontSize: '0.8125rem', 
+                    color: 'var(--text-secondary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}>
+                    <ChevronDown size={12} style={{ transition: 'transform 0.2s' }} />
+                    Queued Documents ({queueStatus.queuedDocuments.length})
+                  </summary>
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {queueStatus.queuedDocuments.map((doc, idx) => (
+                      <div key={doc.documentId} style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 10px', borderRadius: 6,
+                        background: 'var(--bg-muted)', fontSize: '0.75rem'
+                      }}>
+                        <span style={{
+                          width: 20, height: 20, borderRadius: '50%',
+                          background: idx === 0 && queueStatus.isProcessing ? 'var(--accent)' : 'var(--border-default)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: idx === 0 && queueStatus.isProcessing ? 'white' : 'var(--text-muted)',
+                          fontWeight: 600, fontSize: '0.7rem'
+                        }}>
+                          {idx === 0 && queueStatus.isProcessing ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : idx + 1}
+                        </span>
+                        <span style={{ color: 'var(--text-primary)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          Document {doc.documentId.slice(0, 8)}... ({doc.documentType})
+                        </span>
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          {idx === 0 && queueStatus.isProcessing ? 'Processing' : 'Waiting'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              <div style={{ marginTop: 12, padding: 10, borderRadius: 6, background: 'var(--accent-light)', border: '1px solid var(--accent)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Clock size={14} style={{ color: 'var(--accent)' }} />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--accent)' }}>
+                    Processing 1 document at a time (~20 sec each) to respect API rate limits.
+                    {queueStatus.queueLength > 0 && ` Estimated wait: ~${queueStatus.queueLength * 20} seconds.`}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-            <Button variant="outline" onClick={onClose} disabled={uploading}>
+            <Button variant="ghost" onClick={onClose} disabled={uploading || showQueueStatus}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={handleUpload} disabled={files.length === 0 || uploading}>
-              {uploading ? (
-                <>
-                  <Loader2 size={16} style={{ marginRight: 8, animation: 'spin 1s linear infinite' }} />
-                  Processing...
-                </>
-              ) : (
-                `Upload & Process ${files.length > 1 ? `(${files.length})` : ''}`
-              )}
-            </Button>
+            {!showQueueStatus && (
+              <Button variant="primary" onClick={handleUpload} disabled={files.length === 0 || uploading}>
+                {uploading ? (
+                  <>
+                    <Loader2 size={16} style={{ marginRight: 8, animation: 'spin 1s linear infinite' }} />
+                    Processing...
+                  </>
+                ) : (
+                  `Upload & Process ${files.length > 1 ? `(${files.length})` : ''}`
+                )}
+              </Button>
+            )}
+            {showQueueStatus && !queueStatus?.isProcessing && queueStatus?.queueLength === 0 && (
+              <Button variant="primary" onClick={() => { onUploadComplete(); onClose(); }}>
+                <CheckCircle size={16} style={{ marginRight: 6 }} /> All Done
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -298,6 +445,11 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0% { width: 10%; }
+          50% { width: 50%; }
+          100% { width: 10%; }
         }
       `}} />
     </div>
