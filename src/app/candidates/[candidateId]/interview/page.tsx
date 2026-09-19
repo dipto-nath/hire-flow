@@ -1,13 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Avatar, SectionHeader, Divider } from '@/components/ui';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { mockCandidates } from '@/mock-data/candidates';
-import { mockJobs } from '@/mock-data/jobs';
-import { mockInterviews } from '@/mock-data/interviews';
+import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/utils';
 import {
   Plus, Flag, MessageSquare, CheckSquare, ArrowRight,
@@ -20,22 +18,56 @@ export default function InterviewPage() {
   const params = useParams();
   const candidateId = params.candidateId as string;
 
-  const candidate = mockCandidates.find(c => c.id === candidateId);
-  const job = candidate ? mockJobs.find(j => j.id === candidate.jobId) : null;
-  const baseInterview = mockInterviews.find(i => i.candidateId === candidateId);
+  const [candidate, setCandidate] = useState<any>(null);
+  const [job, setJob] = useState<any>(null);
+  const [baseInterview, setBaseInterview] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  const [activeQuestion, setActiveQuestion] = useState<string | null>(
-    baseInterview?.questions[0]?.id ?? null
-  );
-  const [notes, setNotes] = useState<InterviewNote[]>(baseInterview?.notes ?? []);
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const data = await api.candidates.get(candidateId);
+        setCandidate(data);
+        setJob(data.job);
+        setBaseInterview(data.interviews?.[0] || null);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (candidateId) fetchData();
+  }, [candidateId]);
+
+  const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
+  const [notes, setNotes] = useState<InterviewNote[]>([]);
   const [noteInput, setNoteInput] = useState('');
   const [followUp, setFollowUp] = useState<{ question: string; why: string; whatToValidate: string } | null>(null);
   const [showFollowUp, setShowFollowUp] = useState(false);
-  const [addedQuestions, setAddedQuestions] = useState<Set<string>>(
-    new Set(baseInterview?.questions.filter(q => q.addedToInterview).map(q => q.id) ?? [])
-  );
+  const [addedQuestions, setAddedQuestions] = useState<Set<string>>(new Set());
   const [isGeneratingFollowUp, setIsGeneratingFollowUp] = useState(false);
   const [mode, setMode] = useState<'prep' | 'live'>('prep');
+
+  // Initialize state once data is loaded
+  useEffect(() => {
+    if (baseInterview) {
+      if (baseInterview.questions?.length > 0 && !activeQuestion) {
+        setActiveQuestion(baseInterview.questions[0].id);
+      }
+      setNotes(baseInterview.notes || []);
+      setAddedQuestions(new Set(baseInterview.questions?.filter((q: any) => q.addedToInterview).map((q: any) => q.id) || []));
+    }
+  }, [baseInterview]);
+
+  if (loading) {
+    return (
+      <AppShell title="Loading Interview...">
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+          <p>Loading interview details...</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   if (!candidate || !job) {
     return (
@@ -112,20 +144,34 @@ export default function InterviewPage() {
         },
       ];
 
-  const activeQ = allQuestions.find(q => q.id === activeQuestion);
+  const activeQ = allQuestions.find(q => q.id === activeQuestion) || allQuestions[0];
 
-  const handleAddNote = () => {
+  const handleAddNote = async () => {
     if (!noteInput.trim()) return;
-    const newNote: InterviewNote = {
-      id: `note-${Date.now()}`,
+    const newNote = {
       content: noteInput,
-      timestamp: new Date().toISOString(),
       type: 'note',
       questionId: activeQuestion ?? undefined,
       questionText: activeQ?.text,
     };
-    setNotes(prev => [...prev, newNote]);
+    
+    // Optimistic UI update
+    const tempNote: InterviewNote = {
+      id: `temp-${Date.now()}`,
+      ...newNote,
+      timestamp: new Date().toISOString(),
+    };
+    setNotes(prev => [...prev, tempNote]);
     setNoteInput('');
+    
+    if (baseInterview && baseInterview.id !== 'new') {
+      try {
+        const savedNote = await api.interviews.addNote(baseInterview.id, newNote);
+        setNotes(prev => prev.map(n => n.id === tempNote.id ? savedNote : n));
+      } catch (err) {
+        console.error('Failed to save note', err);
+      }
+    }
   };
 
   const handleGenerateFollowUp = async () => {
@@ -362,7 +408,7 @@ export default function InterviewPage() {
                 Candidate
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                <Avatar initials={candidate.initials} color={candidate.avatarColor} size={36} name={candidate.name} />
+                <Avatar initials={candidate.firstName?.[0] + (candidate.lastName?.[0] || '') || 'C'} color="var(--accent)" size={36} name={candidate.name} />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>{candidate.name}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{candidate.currentRole}</div>

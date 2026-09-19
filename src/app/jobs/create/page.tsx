@@ -53,8 +53,32 @@ export default function CreateJobPage() {
 
   const handleCreate = async () => {
     setCreating(true);
-    await new Promise(r => setTimeout(r, 1200));
-    router.push('/jobs/job-fe-001');
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          requirements: requirements.map(r => ({
+            type: r.type,
+            category: r.category,
+            label: r.label,
+          }))
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to create job');
+      }
+
+      const data = await res.json();
+      router.push(`/jobs/${data.id}`);
+    } catch (error) {
+      console.error(error);
+      alert('Error creating job. Please try again.');
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (

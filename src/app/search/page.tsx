@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Avatar, CoverageBar } from '@/components/ui';
-import { mockCandidates } from '@/mock-data/candidates';
+import { api } from '@/lib/api';
 import { groupLabel, groupColor } from '@/lib/utils';
 import { Search, ArrowRight, Sparkles } from 'lucide-react';
 import Link from 'next/link';
@@ -27,80 +27,17 @@ export default function SearchPage() {
     if (!q.trim()) return;
     setQuery(q);
     setIsSearching(true);
-    await new Promise(r => setTimeout(r, 700));
+    setResults(null);
 
-    const lower = q.toLowerCase();
-    const searchResults: SearchResult[] = [];
-
-    mockCandidates.forEach(candidate => {
-      const matchReasons: SearchResult['matchReasons'] = [];
-      let score = 0;
-
-      // Skill matching
-      candidate.skills.forEach(skill => {
-        if (lower.includes(skill.toLowerCase())) {
-          matchReasons.push({ label: skill, source: 'Resume', detail: `Listed as primary skill` });
-          score += 25;
-        }
-      });
-
-      // Experience matching
-      const yearMatch = lower.match(/(\d+)\+?\s*years?/);
-      if (yearMatch) {
-        const required = parseInt(yearMatch[1]);
-        if (candidate.yearsExperience >= required) {
-          matchReasons.push({ label: `${candidate.yearsExperience} years experience`, source: 'Resume', detail: `Meets ${required}+ year requirement` });
-          score += 20;
-        }
-      }
-
-      // Fintech/domain
-      if (lower.includes('fintech') || lower.includes('finance')) {
-        const domainMatch = ['Zenpay', 'N26', 'Razorpay', 'Flutterwave', 'Klarna'].some(company =>
-          candidate.currentCompany.includes(company) || candidate.name.toLowerCase().includes(company.toLowerCase())
-        );
-        if (domainMatch) {
-          matchReasons.push({ label: 'Fintech experience', source: 'Resume', detail: `Works at ${candidate.currentCompany}` });
-          score += 30;
-        }
-      }
-
-      // Missing requirement
-      if (lower.includes('missing') || lower.includes('needs validation')) {
-        if (candidate.validationNeeded) {
-          matchReasons.push({ label: 'Needs validation', source: 'HireFlow Analysis', detail: 'Has unresolved requirements' });
-          score += 15;
-        }
-      }
-
-      // Interview
-      if (lower.includes('interview')) {
-        if (candidate.interviewStatus === 'completed' || candidate.interviewStatus === 'scheduled') {
-          matchReasons.push({ label: `Interview ${candidate.interviewStatus}`, source: 'Interview records', detail: `Interview status: ${candidate.interviewStatus}` });
-          score += 20;
-        }
-      }
-
-      // Strong match bonus
-      if (candidate.group === 'strong_match') score += 10;
-
-      if (matchReasons.length > 0) {
-        searchResults.push({ candidate, matchReasons, relevanceScore: Math.min(score, 100) });
-      }
-    });
-
-    if (searchResults.length === 0) {
-      mockCandidates.slice(0, 5).forEach(c => {
-        searchResults.push({
-          candidate: c,
-          matchReasons: [{ label: c.skills[0] ?? 'General match', source: 'Resume', detail: 'Active candidate pool' }],
-          relevanceScore: 30,
-        });
-      });
+    try {
+      const data = await api.search.query({ query: q });
+      setResults(data.results || []);
+    } catch (err) {
+      console.error(err);
+      setResults([]);
+    } finally {
+      setIsSearching(false);
     }
-
-    setResults(searchResults.sort((a, b) => b.relevanceScore - a.relevanceScore));
-    setIsSearching(false);
   };
 
   return (
@@ -220,7 +157,7 @@ export default function SearchPage() {
                   padding: 18,
                 }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 12 }}>
-                    <Avatar initials={result.candidate.initials} color={result.candidate.avatarColor} size={40} name={result.candidate.name} />
+                    <Avatar initials={result.candidate.firstName?.[0] + (result.candidate.lastName?.[0] || '') || 'C'} color="var(--accent)" size={40} name={result.candidate.name} />
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>

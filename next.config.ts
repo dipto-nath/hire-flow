@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Disable static generation for auth routes
+  // This ensures login page is always dynamically rendered
+  experimental: {
+    ppr: false,
+  },
 };
 
 export default nextConfig;

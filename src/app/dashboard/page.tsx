@@ -1,11 +1,11 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { MetricBlock, SectionHeader, Button, Badge, Avatar, CoverageBar } from '@/components/ui';
-import { mockJobs } from '@/mock-data/jobs';
-import { mockCandidates } from '@/mock-data/candidates';
-import { mockAuditEvents } from '@/mock-data/audit';
 import { formatRelativeTime, jobStatusColor, stageLabel } from '@/lib/utils';
+import { api } from '@/lib/api';
+import { Job, Candidate, AuditEvent } from '@/types';
 import {
   Briefcase, Users, CalendarCheck, AlertTriangle,
   ArrowRight, ChevronRight, Upload, Clock, FileText,
@@ -40,10 +40,34 @@ const recentActivity = [
 ];
 
 export default function DashboardPage() {
-  const activeJobs = mockJobs.filter(j => j.status === 'active');
-  const totalCandidates = mockCandidates.length;
-  const inInterview = mockCandidates.filter(c => c.stage === 'interview').length;
-  const awaitingEval = mockCandidates.filter(c => c.stage === 'evaluation').length;
+  const [activeJobs, setActiveJobs] = useState<Job[]>([]);
+  const [totalCandidates, setTotalCandidates] = useState(0);
+  const [inInterview, setInInterview] = useState(0);
+  const [awaitingEval, setAwaitingEval] = useState(0);
+  const [attentionCount, setAttentionCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [jobsRes, candidatesRes, attentionRes] = await Promise.all([
+          api.jobs.list({ status: 'active', limit: 5 }),
+          api.candidates.list({ limit: 1 }), // Just for total count
+          api.candidates.list({ stage: 'interview' }), // In interview
+        ]);
+        
+        setActiveJobs(jobsRes.jobs);
+        setTotalCandidates(candidatesRes.total);
+        setInInterview(attentionRes.total);
+        // Note: we can expand this to fetch more accurate pipeline numbers
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
 
   return (
     <AppShell title="Dashboard">
@@ -70,7 +94,7 @@ export default function DashboardPage() {
           <MetricBlock
             label="Candidates in Review"
             value={totalCandidates}
-            delta={`${mockCandidates.filter(c => c.validationNeeded).length} need attention`}
+            delta={loading ? 'Loading...' : `${attentionCount} need attention`}
             icon={<Users size={15} />}
           />
           <MetricBlock
@@ -174,12 +198,12 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {mockJobs.map((job, i) => {
-                    const { color, bg } = jobStatusColor[job.status];
+                  {activeJobs.map((job, i) => {
+                    const { color, bg } = jobStatusColor[job.status] || jobStatusColor['draft'];
                     return (
                       <tr
                         key={job.id}
-                        style={{ borderBottom: i < mockJobs.length - 1 ? '1px solid var(--border-muted)' : 'none' }}
+                        style={{ borderBottom: i < activeJobs.length - 1 ? '1px solid var(--border-muted)' : 'none' }}
                         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-base)'; }}
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                       >
@@ -188,8 +212,8 @@ export default function DashboardPage() {
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>{job.location}</div>
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>{job.department}</td>
-                        <td style={{ padding: '12px 16px', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>{job.candidateCount}</td>
-                        <td style={{ padding: '12px 16px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>{job.interviewCount}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)' }}>{job.candidateCount || 0}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>{job.interviewCount || 0}</td>
                         <td style={{ padding: '12px 16px' }}>
                           <Badge color={color} bg={bg}>{job.hiringStage}</Badge>
                         </td>
@@ -206,6 +230,13 @@ export default function DashboardPage() {
                       </tr>
                     );
                   })}
+                  {activeJobs.length === 0 && !loading && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8125rem' }}>
+                        No active roles.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

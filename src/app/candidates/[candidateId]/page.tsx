@@ -1,14 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Avatar, CoverageBar, Tabs, SectionHeader, Divider } from '@/components/ui';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { mockCandidates } from '@/mock-data/candidates';
-import { mockJobs } from '@/mock-data/jobs';
-import { mockInterviews } from '@/mock-data/interviews';
 import { formatDate, groupLabel, groupColor, stageLabel, stageColor, evidenceStatusLabel } from '@/lib/utils';
+import { api } from '@/lib/api';
 import {
   MapPin, Briefcase, GraduationCap, CalendarCheck, FileText,
   ChevronRight, ExternalLink, Plus, MessageSquare, AlertTriangle,
@@ -30,9 +28,35 @@ export default function CandidateProfilePage() {
   const [tab, setTab] = useState('coverage');
   const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
 
-  const candidate = mockCandidates.find(c => c.id === candidateId);
-  const job = candidate ? mockJobs.find(j => j.id === candidate.jobId) : null;
-  const interview = mockInterviews.find(i => i.candidateId === candidateId);
+  const [candidate, setCandidate] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCandidate = async () => {
+      try {
+        const data = await api.candidates.get(candidateId);
+        setCandidate(data);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (candidateId) fetchCandidate();
+  }, [candidateId]);
+
+  if (loading) {
+    return (
+      <AppShell title="Loading Candidate...">
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+          <p>Loading candidate details...</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  const job = candidate?.job;
+  const interview = candidate?.interviews?.[0]; // Get the first or most recent interview
 
   if (!candidate || !job) {
     return (
@@ -64,7 +88,7 @@ export default function CandidateProfilePage() {
         padding: '20px 28px 0',
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
-          <Avatar initials={candidate.initials} color={candidate.avatarColor} size={52} name={candidate.name} />
+          <Avatar initials={candidate.firstName?.[0] + (candidate.lastName?.[0] || '') || 'C'} color="var(--accent)" size={52} name={candidate.name} />
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
               <h1 style={{ margin: 0, fontSize: '1.1875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -152,8 +176,8 @@ export default function CandidateProfilePage() {
 // ─── Requirement Coverage Tab ─────────────────────────────────────────────────
 
 function RequirementCoverageTab({ candidate, job, expandedEvidence, setExpandedEvidence }: {
-  candidate: ReturnType<typeof mockCandidates.find> & {};
-  job: ReturnType<typeof mockJobs.find> & {};
+  candidate: any;
+  job: any;
   expandedEvidence: string | null;
   setExpandedEvidence: (id: string | null) => void;
 }) {
@@ -348,7 +372,7 @@ function RequirementCoverageTab({ candidate, job, expandedEvidence, setExpandedE
             Skills
           </h3>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {candidate.skills.map((skill: string) => (
+            {candidate.skills?.map((skill: string) => (
               <Badge key={skill}>{skill}</Badge>
             ))}
           </div>
@@ -398,7 +422,7 @@ function RequirementCoverageTab({ candidate, job, expandedEvidence, setExpandedE
 
 // ─── Summary Tab ──────────────────────────────────────────────────────────────
 
-function SummaryTab({ candidate }: { candidate: ReturnType<typeof mockCandidates.find> & {} }) {
+function SummaryTab({ candidate }: { candidate: any }) {
   if (!candidate?.summary) return (
     <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
       Candidate summary not yet generated.
@@ -467,8 +491,8 @@ function SummaryTab({ candidate }: { candidate: ReturnType<typeof mockCandidates
 
 // ─── Evidence Tab ─────────────────────────────────────────────────────────────
 
-function EvidenceTab({ candidate }: { candidate: ReturnType<typeof mockCandidates.find> & {} }) {
-  if (!candidate) return null;
+function EvidenceTab({ candidate }: { candidate: any }) {
+  if (!candidate || !candidate.evidence) return null;
 
   return (
     <div style={{ maxWidth: 720 }}>

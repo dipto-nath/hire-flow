@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Avatar, PageHeader } from '@/components/ui';
-import { mockAuditEvents } from '@/mock-data/audit';
+import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/utils';
 import { FileText, User, ChevronRight, X, ExternalLink } from 'lucide-react';
 import { AuditEvent } from '@/types';
@@ -12,8 +12,25 @@ import Link from 'next/link';
 export default function AuditPage() {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
+  
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const sorted = [...mockAuditEvents].sort((a, b) =>
+  useEffect(() => {
+    const fetchAudit = async () => {
+      try {
+        const data = await api.audit.list();
+        setAuditEvents(data.events || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAudit();
+  }, []);
+
+  const sorted = [...auditEvents].sort((a, b) =>
     new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
 
@@ -58,7 +75,7 @@ export default function AuditPage() {
             <option value="system">System</option>
           </select>
           <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
-            {filtered.length} events
+            {loading ? 'Loading...' : `${filtered.length} events`}
           </span>
         </div>
 

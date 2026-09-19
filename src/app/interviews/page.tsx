@@ -1,20 +1,32 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader, Button, Badge, Avatar, SectionHeader } from '@/components/ui';
-import { mockInterviews } from '@/mock-data/interviews';
-import { mockCandidates } from '@/mock-data/candidates';
-import { mockJobs } from '@/mock-data/jobs';
+import { formatDateTime, formatDate } from '@/lib/utils';
+import { api } from '@/lib/api';
+import { Interview, Candidate, Job } from '@/types';
 import { formatDateTime, formatDate } from '@/lib/utils';
 import { CalendarCheck, Clock, CheckCircle, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 
 export default function InterviewsPage() {
-  const enriched = mockInterviews.map(interview => {
-    const candidate = mockCandidates.find(c => c.id === interview.candidateId);
-    const job = mockJobs.find(j => j.id === interview.jobId);
-    return { interview, candidate, job };
-  });
+  const [interviews, setInterviews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchInterviews = async () => {
+      try {
+        const res = await api.interviews.list({ limit: 100 });
+        setInterviews(res.interviews);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchInterviews();
+  }, []);
 
   const statusColor = (status: string): { color: string; bg: string } => {
     if (status === 'completed') return { color: 'var(--status-verified)', bg: 'var(--status-verified-bg)' };
@@ -34,15 +46,15 @@ export default function InterviewsPage() {
       <div>
         <PageHeader
           title="Interviews"
-          subtitle={`${mockInterviews.length} interviews tracked`}
+          subtitle={loading ? 'Loading...' : `${interviews.length} interviews tracked`}
         />
 
         <div style={{ padding: '20px 24px 48px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
             {[
-              { label: 'Scheduled', count: mockInterviews.filter(i => i.status === 'scheduled').length, color: 'var(--accent)' },
-              { label: 'Completed', count: mockInterviews.filter(i => i.status === 'completed').length, color: 'var(--status-verified)' },
-              { label: 'Total', count: mockInterviews.length, color: 'var(--text-secondary)' },
+              { label: 'Scheduled', count: interviews.filter(i => i.status === 'scheduled').length, color: 'var(--accent)' },
+              { label: 'Completed', count: interviews.filter(i => i.status === 'completed').length, color: 'var(--status-verified)' },
+              { label: 'Total', count: interviews.length, color: 'var(--text-secondary)' },
             ].map(item => (
               <div key={item.label} style={{
                 background: 'var(--bg-surface)',
@@ -61,9 +73,18 @@ export default function InterviewsPage() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {enriched.map(({ interview, candidate, job }) => {
+            {loading ? (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Loading interviews...</div>
+            ) : interviews.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>No interviews tracked.</div>
+            ) : interviews.map((interview) => {
+              const candidate = interview.candidate;
+              const job = interview.job;
               if (!candidate || !job) return null;
+              
               const { color, bg } = statusColor(interview.status);
+              const initials = candidate.name?.split(' ').map((n: string) => n[0]).join('').substring(0, 2) || 'C';
+              
               return (
                 <div key={interview.id} style={{
                   background: 'var(--bg-surface)',
@@ -74,7 +95,7 @@ export default function InterviewsPage() {
                   alignItems: 'center',
                   gap: 16,
                 }}>
-                  <Avatar initials={candidate.initials} color={candidate.avatarColor} size={40} name={candidate.name} />
+                  <Avatar initials={initials} color="var(--accent)" size={40} name={candidate.name} />
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                       <span style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>
@@ -87,7 +108,7 @@ export default function InterviewsPage() {
                       </Badge>
                     </div>
                     <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                      {job.title} · {interview.interviewers.join(', ')}
+                      {job.title} · {interview.interviewers?.join(', ') || 'No interviewers'}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
@@ -97,7 +118,7 @@ export default function InterviewsPage() {
                       </div>
                     )}
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {interview.notes.length} notes · {interview.questions.length} questions
+                      {interview.notes?.length || 0} notes · {interview.questions?.length || 0} questions
                     </div>
                   </div>
                   <Link href={`/candidates/${candidate.id}/interview`}>

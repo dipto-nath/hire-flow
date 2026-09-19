@@ -1,12 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Avatar, CoverageBar } from '@/components/ui';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { mockJobs } from '@/mock-data/jobs';
-import { mockCandidates } from '@/mock-data/candidates';
+import { api } from '@/lib/api';
 import { formatRelativeTime, groupLabel, groupColor, stageLabel, stageColor, evidenceStatusColor } from '@/lib/utils';
 import { Search, Filter, ChevronRight, ChevronDown, Users } from 'lucide-react';
 import Link from 'next/link';
@@ -27,20 +26,39 @@ export default function JobCandidatesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<string>('all');
 
-  const job = mockJobs.find(j => j.id === jobId);
-  const allCandidates = mockCandidates.filter(c => c.jobId === jobId);
+  const [job, setJob] = useState<any>(null);
+  const [allCandidates, setAllCandidates] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchJob = async () => {
+      try {
+        const data = await api.jobs.get(jobId);
+        setJob(data);
+        setAllCandidates(data.candidates || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (jobId) fetchJob();
+  }, [jobId]);
 
   const filtered = allCandidates.filter(c => {
     if (activeGroup !== 'all' && c.group !== activeGroup) return false;
     if (stageFilter !== 'all' && c.stage !== stageFilter) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      return c.name.toLowerCase().includes(q) || c.currentRole.toLowerCase().includes(q) ||
-        c.skills.some(s => s.toLowerCase().includes(q));
+      const role = c.currentRole || '';
+      const comp = c.currentCompany || '';
+      return c.name.toLowerCase().includes(q) || role.toLowerCase().includes(q) || comp.toLowerCase().includes(q) ||
+        (c.skills && c.skills.some((s: string) => s.toLowerCase().includes(q)));
     }
     return true;
   });
 
+  if (loading) return null;
   if (!job) return null;
 
   return (
@@ -211,17 +229,17 @@ function CandidateRow({ candidate: c, isLast }: { candidate: Candidate; isLast: 
       {/* Candidate */}
       <td style={{ padding: '12px 14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Avatar initials={c.initials} color={c.avatarColor} size={30} name={c.name} />
+          <Avatar initials={c.firstName?.[0] + (c.lastName?.[0] || '') || 'C'} color="var(--accent)" size={30} name={c.name} />
           <div>
             <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{c.name}</div>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>{c.location}</div>
+            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>{c.location || c.email}</div>
           </div>
         </div>
       </td>
       {/* Current role */}
       <td style={{ padding: '12px 14px' }}>
-        <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>{c.currentRole}</div>
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.currentCompany}</div>
+        <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>{c.currentRole || 'No role'}</div>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.currentCompany || 'No company'}</div>
       </td>
       {/* Experience */}
       <td style={{ padding: '12px 14px', fontSize: '0.8125rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
@@ -230,15 +248,15 @@ function CandidateRow({ candidate: c, isLast }: { candidate: Candidate; isLast: 
       {/* Skills */}
       <td style={{ padding: '12px 14px' }}>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 200 }}>
-          {c.skills.slice(0, 3).map(skill => (
+          {c.skills?.slice(0, 3).map((skill: string) => (
             <Badge key={skill}>{skill}</Badge>
           ))}
-          {c.skills.length > 3 && <Badge>+{c.skills.length - 3}</Badge>}
+          {c.skills?.length > 3 && <Badge>+{c.skills.length - 3}</Badge>}
         </div>
       </td>
       {/* Coverage */}
       <td style={{ padding: '12px 14px', minWidth: 120 }}>
-        <CoverageBar value={c.requirementCoverage} size="sm" />
+        <CoverageBar value={c.requirementCoverage || 0} size="sm" />
       </td>
       {/* Validation */}
       <td style={{ padding: '12px 14px' }}>
@@ -251,10 +269,10 @@ function CandidateRow({ candidate: c, isLast }: { candidate: Candidate; isLast: 
       {/* Stage */}
       <td style={{ padding: '12px 14px' }}>
         <Badge
-          color={stageColor[c.stage]}
-          bg={`${stageColor[c.stage]}18`}
+          color={stageColor[c.stage] || 'gray'}
+          bg={`${stageColor[c.stage] || 'gray'}18`}
         >
-          {stageLabel[c.stage]}
+          {stageLabel[c.stage] || c.stage}
         </Badge>
       </td>
       {/* Updated */}

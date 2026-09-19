@@ -1,12 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Tabs, Avatar, CoverageBar, SectionHeader } from '@/components/ui';
-import { mockJobs } from '@/mock-data/jobs';
-import { mockCandidates } from '@/mock-data/candidates';
-import { mockAuditEvents } from '@/mock-data/audit';
+import { api } from '@/lib/api';
+import { Job, Candidate, AuditEvent } from '@/types';
 import { formatRelativeTime, formatDate, jobStatusColor, groupLabel, groupColor, stageLabel, stageColor, evidenceStatusColor } from '@/lib/utils';
 import {
   Upload, Edit, ChevronRight, Users, ArrowRight, CheckCircle,
@@ -27,9 +26,40 @@ export default function JobWorkspacePage() {
   const params = useParams();
   const jobId = params.jobId as string;
   const [tab, setTab] = useState('overview');
+  
+  const [job, setJob] = useState<any>(null);
+  const [candidates, setCandidates] = useState<any[]>([]);
+  const [jobAudit, setJobAudit] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const job = mockJobs.find(j => j.id === jobId);
-  const candidates = mockCandidates.filter(c => c.jobId === jobId);
+  useEffect(() => {
+    const fetchJobData = async () => {
+      try {
+        const [jobData, auditRes] = await Promise.all([
+          api.jobs.get(jobId),
+          api.audit.list({ jobId, limit: 5 }),
+        ]);
+        setJob(jobData);
+        setCandidates(jobData.candidates || []);
+        setJobAudit(auditRes.events || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (jobId) fetchJobData();
+  }, [jobId]);
+
+  if (loading) {
+    return (
+      <AppShell title="Loading Job...">
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+          <p>Loading job details...</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   if (!job) {
     return (
@@ -58,8 +88,6 @@ export default function JobWorkspacePage() {
     { key: 'needs_validation', count: candidates.filter(c => c.group === 'needs_validation').length },
     { key: 'insufficient_evidence', count: candidates.filter(c => c.group === 'insufficient_evidence').length },
   ] as const;
-
-  const jobAudit = mockAuditEvents.filter(e => e.jobId === jobId).slice(0, 5);
 
   return (
     <AppShell
@@ -300,17 +328,17 @@ export default function JobWorkspacePage() {
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-base)'; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                 >
-                  <Avatar initials={c.initials} color={c.avatarColor} size={32} name={c.name} />
+                  <Avatar initials={c.firstName?.[0] + (c.lastName?.[0] || '') || 'C'} color="var(--accent)" size={32} name={c.name} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{c.name}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.currentRole} · {c.currentCompany}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.currentRole || 'No role'} · {c.currentCompany || 'No company'}</div>
                   </div>
                   <CoverageBar value={c.requirementCoverage} size="sm" />
                   <Badge
-                    color={groupColor[c.group].color}
-                    bg={groupColor[c.group].bg}
+                    color={groupColor[c.group]?.color || 'gray'}
+                    bg={groupColor[c.group]?.bg || '#f3f4f6'}
                   >
-                    {groupLabel[c.group]}
+                    {groupLabel[c.group] || c.group}
                   </Badge>
                   <ChevronRight size={14} color="var(--text-faint)" />
                 </Link>

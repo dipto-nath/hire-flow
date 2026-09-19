@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Avatar, CoverageBar, PageHeader } from '@/components/ui';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { mockCandidates } from '@/mock-data/candidates';
+import { api } from '@/lib/api';
 import { formatRelativeTime, groupLabel, groupColor, stageLabel, stageColor } from '@/lib/utils';
 import { Search, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
@@ -14,14 +14,32 @@ export default function CandidatesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [stageFilter, setStageFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = mockCandidates.filter(c => {
+  useEffect(() => {
+    const fetchCandidates = async () => {
+      try {
+        const res = await api.candidates.list({ limit: 100 });
+        setCandidates(res.candidates);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCandidates();
+  }, []);
+
+  const filtered = candidates.filter(c => {
     if (stageFilter !== 'all' && c.stage !== stageFilter) return false;
     if (groupFilter !== 'all' && c.group !== groupFilter) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      return c.name.toLowerCase().includes(q) || c.currentRole.toLowerCase().includes(q) ||
-        c.skills.some(s => s.toLowerCase().includes(q)) || c.currentCompany.toLowerCase().includes(q);
+      const currentRole = c.currentRole || '';
+      const currentCompany = c.currentCompany || '';
+      return c.name.toLowerCase().includes(q) || currentRole.toLowerCase().includes(q) ||
+        c.skills.some(s => s.toLowerCase().includes(q)) || currentCompany.toLowerCase().includes(q);
     }
     return true;
   });
@@ -31,7 +49,7 @@ export default function CandidatesPage() {
       <div>
         <PageHeader
           title="Candidates"
-          subtitle={`${mockCandidates.length} candidates across all active roles`}
+          subtitle={loading ? 'Loading...' : `${candidates.length} candidates across all active roles`}
         />
 
         {/* Filters */}
@@ -112,56 +130,70 @@ export default function CandidatesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((c, i) => (
-                  <tr
-                    key={c.id}
-                    style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border-muted)' : 'none' }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-base)'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                  >
-                    <td style={{ padding: '12px 14px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <Avatar initials={c.initials} color={c.avatarColor} size={30} name={c.name} />
-                        <div>
-                          <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{c.name}</div>
-                          <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>{c.email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>{c.currentRole}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.currentCompany}</div>
-                    </td>
-                    <td style={{ padding: '12px 14px', fontSize: '0.8125rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{c.yearsExperience}y</td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 180 }}>
-                        {c.skills.slice(0, 2).map(s => <Badge key={s}>{s}</Badge>)}
-                        {c.skills.length > 2 && <Badge>+{c.skills.length - 2}</Badge>}
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 14px', minWidth: 110 }}>
-                      <CoverageBar value={c.requirementCoverage} size="sm" />
-                    </td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <Badge color={groupColor[c.group].color} bg={groupColor[c.group].bg}>
-                        {groupLabel[c.group]}
-                      </Badge>
-                    </td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <Badge color={stageColor[c.stage]} bg={`${stageColor[c.stage]}18`}>
-                        {stageLabel[c.stage]}
-                      </Badge>
-                    </td>
-                    <td style={{ padding: '12px 14px', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                      {formatRelativeTime(c.updatedAt)}
-                    </td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <Link href={`/candidates/${c.id}`}>
-                        <Button variant="ghost" size="sm">View <ChevronRight size={13} /></Button>
-                      </Link>
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                      Loading candidates...
                     </td>
                   </tr>
-                ))}
+                ) : filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                      No candidates found.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((c, i) => (
+                    <tr
+                      key={c.id}
+                      style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border-muted)' : 'none' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-base)'; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                    >
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <Avatar initials={c.firstName?.[0] + (c.lastName?.[0] || '') || 'C'} color={'var(--accent)'} size={30} name={c.name} />
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{c.name}</div>
+                            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>{c.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>{c.currentRole}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{c.currentCompany}</div>
+                      </td>
+                      <td style={{ padding: '12px 14px', fontSize: '0.8125rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{c.yearsExperience || 0}y</td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 180 }}>
+                          {c.skills?.slice(0, 2).map(s => <Badge key={s}>{s}</Badge>)}
+                          {c.skills?.length > 2 && <Badge>+{c.skills.length - 2}</Badge>}
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 14px', minWidth: 110 }}>
+                        <CoverageBar value={c.requirementCoverage || 0} size="sm" />
+                      </td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <Badge color={groupColor[c.group]?.color || 'gray'} bg={groupColor[c.group]?.bg || '#f3f4f6'}>
+                          {groupLabel[c.group] || c.group}
+                        </Badge>
+                      </td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <Badge color={stageColor[c.stage] || 'gray'} bg={`${stageColor[c.stage] || 'gray'}18`}>
+                          {stageLabel[c.stage] || c.stage}
+                        </Badge>
+                      </td>
+                      <td style={{ padding: '12px 14px', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {formatRelativeTime(c.updatedAt)}
+                      </td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <Link href={`/candidates/${c.id}`}>
+                          <Button variant="ghost" size="sm">View <ChevronRight size={13} /></Button>
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

@@ -1,13 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button, Badge, Avatar, SectionHeader, CoverageBar, Divider } from '@/components/ui';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { mockCandidates } from '@/mock-data/candidates';
-import { mockJobs } from '@/mock-data/jobs';
-import { mockInterviews } from '@/mock-data/interviews';
+import { api } from '@/lib/api';
 import { formatDate, evidenceStatusLabel } from '@/lib/utils';
 import { Edit, Save, ArrowLeft, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
@@ -25,9 +23,26 @@ export default function EvaluationReportPage() {
   const params = useParams();
   const candidateId = params.candidateId as string;
 
-  const candidate = mockCandidates.find(c => c.id === candidateId);
-  const job = candidate ? mockJobs.find(j => j.id === candidate.jobId) : null;
-  const interview = mockInterviews.find(i => i.candidateId === candidateId);
+  const [candidate, setCandidate] = useState<any>(null);
+  const [job, setJob] = useState<any>(null);
+  const [interview, setInterview] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const data = await api.candidates.get(candidateId);
+        setCandidate(data);
+        setJob(data.job);
+        setInterview(data.interviews?.[0] || null);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (candidateId) fetchData();
+  }, [candidateId]);
 
   const [assessment, setAssessment] = useState({
     overallRating: '' as EvaluationRating | '',
@@ -37,6 +52,16 @@ export default function EvaluationReportPage() {
     recommendation: '',
   });
   const [saved, setSaved] = useState(false);
+
+  if (loading) {
+    return (
+      <AppShell title="Loading Report...">
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+          <p>Loading evaluation details...</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   if (!candidate || !job) {
     return (
@@ -109,7 +134,7 @@ export default function EvaluationReportPage() {
                 Candidate
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Avatar initials={candidate.initials} color={candidate.avatarColor} size={30} name={candidate.name} />
+                <Avatar initials={candidate.firstName?.[0] + (candidate.lastName?.[0] || '') || 'C'} color="var(--accent)" size={30} name={candidate.name} />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{candidate.name}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{candidate.currentRole}</div>

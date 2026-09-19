@@ -14,6 +14,7 @@ import { aiRoutes } from './routes/ai.js';
 import { searchRoutes } from './routes/search.js';
 import { auditRoutes } from './routes/audit.js';
 import { uploadRoutes } from './routes/upload.js';
+import { authRoutes } from './routes/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -57,6 +58,7 @@ async function start() {
   await app.register(searchRoutes, { prefix: '/api/search' });
   await app.register(auditRoutes, { prefix: '/api/audit' });
   await app.register(uploadRoutes, { prefix: '/api/upload' });
+  await app.register(authRoutes, { prefix: '/api/auth' });
 
   // Global error handler
   app.setErrorHandler((error, request, reply) => {

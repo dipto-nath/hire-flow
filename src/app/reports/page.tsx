@@ -1,9 +1,9 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader, SectionHeader, Badge } from '@/components/ui';
-import { mockJobs } from '@/mock-data/jobs';
-import { mockCandidates } from '@/mock-data/candidates';
+import { api } from '@/lib/api';
 import { stageLabel, stageColor } from '@/lib/utils';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell
@@ -12,19 +12,41 @@ import {
 const stageKeys = ['applied', 'screening', 'interview', 'evaluation', 'decision'] as const;
 
 export default function ReportsPage() {
-  const activeJobs = mockJobs.filter(j => j.status === 'active');
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [candidates, setCandidates] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [jobsData, candidatesData] = await Promise.all([
+          api.jobs.list(),
+          api.candidates.list(),
+        ]);
+        setJobs(jobsData.jobs || []);
+        setCandidates(candidatesData.candidates || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  const activeJobs = jobs.filter(j => j.status === 'active');
 
   const pipelineData = stageKeys.map(stage => ({
     name: stageLabel[stage],
-    count: mockCandidates.filter(c => c.stage === stage).length,
+    count: candidates.filter(c => c.stage === stage).length,
     color: stageColor[stage],
   }));
 
   const groupData = [
-    { name: 'Strong Match', value: mockCandidates.filter(c => c.group === 'strong_match').length, color: '#15803d' },
-    { name: 'Potential Match', value: mockCandidates.filter(c => c.group === 'potential_match').length, color: '#1d4ed8' },
-    { name: 'Needs Validation', value: mockCandidates.filter(c => c.group === 'needs_validation').length, color: '#92400e' },
-    { name: 'Insufficient Evidence', value: mockCandidates.filter(c => c.group === 'insufficient_evidence').length, color: '#6b7280' },
+    { name: 'Strong Match', value: candidates.filter(c => c.group === 'strong_match').length, color: '#15803d' },
+    { name: 'Potential Match', value: candidates.filter(c => c.group === 'potential_match').length, color: '#1d4ed8' },
+    { name: 'Needs Validation', value: candidates.filter(c => c.group === 'needs_validation').length, color: '#92400e' },
+    { name: 'Insufficient Evidence', value: candidates.filter(c => c.group === 'insufficient_evidence').length, color: '#6b7280' },
   ];
 
   return (
@@ -35,7 +57,12 @@ export default function ReportsPage() {
           subtitle="Hiring pipeline analytics and candidate distribution"
         />
 
-        <div style={{ padding: '24px 24px 64px' }}>
+        {loading ? (
+          <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)' }}>
+            Loading report data...
+          </div>
+        ) : (
+          <div style={{ padding: '24px 24px 64px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
             {/* Pipeline chart */}
             <div style={{
@@ -122,7 +149,7 @@ export default function ReportsPage() {
               </thead>
               <tbody>
                 {activeJobs.map((job, i) => {
-                  const jobCandidates = mockCandidates.filter(c => c.jobId === job.id);
+                  const jobCandidates = candidates.filter(c => c.jobId === job.id);
                   return (
                     <tr key={job.id} style={{ borderBottom: i < activeJobs.length - 1 ? '1px solid var(--border-muted)' : 'none' }}>
                       <td style={{ padding: '12px 16px' }}>
@@ -153,6 +180,7 @@ export default function ReportsPage() {
             </table>
           </div>
         </div>
+        )}
       </div>
     </AppShell>
   );

@@ -1,9 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader, Button, Badge, Tabs } from '@/components/ui';
-import { mockJobs } from '@/mock-data/jobs';
 import { formatDate, jobStatusColor } from '@/lib/utils';
 import { Plus, ArrowRight, Users, CalendarCheck } from 'lucide-react';
 import Link from 'next/link';
@@ -18,15 +17,33 @@ const tabOptions = [
 
 export default function JobsPage() {
   const [tab, setTab] = useState('all');
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = tab === 'all' ? mockJobs : mockJobs.filter(j => j.status === tab);
+  useEffect(() => {
+    const fetchJobs = async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/jobs`);
+        if (!res.ok) throw new Error('Failed to fetch jobs');
+        const data = await res.json();
+        setJobs(data.jobs);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchJobs();
+  }, []);
+
+  const filtered = tab === 'all' ? jobs : jobs.filter(j => j.status === tab);
 
   return (
     <AppShell title="Jobs" breadcrumbs={[{ label: 'Jobs' }]}>
       <div>
         <PageHeader
           title="Jobs"
-          subtitle={`${mockJobs.filter(j => j.status === 'active').length} active roles`}
+          subtitle={loading ? 'Loading...' : `${jobs.filter(j => j.status === 'active').length} active roles`}
           actions={
             <Link href="/jobs/create">
               <Button variant="primary" size="md">
@@ -36,7 +53,7 @@ export default function JobsPage() {
           }
         />
 
-        <Tabs tabs={tabOptions.map(t => ({ ...t, count: t.key === 'all' ? mockJobs.length : mockJobs.filter(j => j.status === t.key).length }))} active={tab} onChange={setTab} />
+        <Tabs tabs={tabOptions.map(t => ({ ...t, count: t.key === 'all' ? jobs.length : jobs.filter(j => j.status === t.key).length }))} active={tab} onChange={setTab} />
 
         <div style={{ padding: '20px 24px' }}>
           <div style={{
@@ -65,7 +82,13 @@ export default function JobsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                      Loading jobs...
+                    </td>
+                  </tr>
+                ) : filtered.length === 0 ? (
                   <tr>
                     <td colSpan={8} style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                       No jobs in this category yet.
@@ -101,7 +124,7 @@ export default function JobsPage() {
                           </div>
                         </td>
                         <td style={{ padding: '14px 16px' }}>
-                          <Badge color={color} bg={bg}>{job.status.charAt(0).toUpperCase() + job.status.slice(1)}</Badge>
+                          <Badge color={color} bg={bg}>{job.status ? job.status.charAt(0).toUpperCase() + job.status.slice(1) : ''}</Badge>
                         </td>
                         <td style={{ padding: '14px 16px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
                           {formatDate(job.createdAt)}
