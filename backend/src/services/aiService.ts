@@ -92,7 +92,10 @@ interface SearchMatchReason {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function generateWithRetry(prompt: string, fileData?: { path: string, mimeType: string }, retries = 7): Promise<any> {
+async function generateWithRetry(prompt: string, fileData?: { path: string, mimeType: string }, retries = 3): Promise<any> {
+  // Use gemini-1.5-flash-8b for faster, cheaper processing (higher rate limits)
+  const MODEL = 'gemini-1.5-flash-8b';
+  
   for (let i = 0; i < retries; i++) {
     try {
       const parts: any[] = [];
@@ -108,7 +111,7 @@ async function generateWithRetry(prompt: string, fileData?: { path: string, mime
       parts.push({ text: prompt });
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: MODEL,
         contents: parts,
         config: {
           responseMimeType: 'application/json',
@@ -121,11 +124,19 @@ async function generateWithRetry(prompt: string, fileData?: { path: string, mime
       
       return JSON.parse(responseText);
     } catch (error: any) {
-      console.log(`Gemini Error (attempt ${i+1}):`, error.message);
+      console.log(`Gemini Error (attempt ${i+1}/${retries}):`, error.message?.substring(0, 200));
       if (i === retries - 1) throw error;
-      if (error.status === 429 || error.status === 503 || (error.message && error.message.includes('429'))) {
-        const waitMs = 5000 * Math.pow(2, i);
-        console.log(`Rate limited or busy. Waiting ${waitMs}ms before retry...`);
+      
+      // Check for quota exhaustion (daily limit) - don't retry aggressively
+      const isQuotaExhausted = error.status === 429 && 
+        (error.message?.includes('quota') || error.message?.includes('Quota') || error.message?.includes('limit: 20'));
+      
+      if (isQuotaExhausted) {
+        console.log('Daily quota exhausted. Waiting 60s before retry...');
+        await delay(60000); // Wait 1 minute instead of exponential backoff
+      } else if (error.status === 429 || error.status === 503 || (error.message && error.message.includes('429'))) {
+        const waitMs = Math.min(5000 * Math.pow(2, i), 30000); // Cap at 30s
+        console.log(`Rate limited. Waiting ${waitMs}ms before retry...`);
         await delay(waitMs);
       } else {
         throw error;
