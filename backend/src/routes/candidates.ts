@@ -32,7 +32,7 @@ export async function candidateRoutes(app: FastifyInstance) {
       offset?: string;
     };
 
-    const parsedLimit = limit ? parseInt(limit, 10) : 50;
+    const parsedLimit = limit ? (typeof limit === 'string' ? parseInt(limit, 10) : limit) : 50;
     const parsedOffset = offset ? parseInt(offset, 10) : 0;
 
     const where: any = {};

@@ -11,6 +11,8 @@ export async function interviewRoutes(app) {
             where.jobId = jobId;
         if (status)
             where.status = status;
+        const parsedLimit = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+        const parsedOffset = typeof offset === 'string' ? parseInt(offset, 10) : offset;
         const [interviews, total] = await Promise.all([
             prisma.interview.findMany({
                 where,
@@ -22,12 +24,12 @@ export async function interviewRoutes(app) {
                     summary: true,
                 },
                 orderBy: { createdAt: 'desc' },
-                take: limit,
-                skip: offset,
+                take: parsedLimit,
+                skip: parsedOffset,
             }),
             prisma.interview.count({ where }),
         ]);
-        return { interviews, total, limit, offset };
+        return { interviews, total, limit: parsedLimit, offset: parsedOffset };
     });
     // GET /api/interviews/:id - Get interview by ID
     app.get('/:id', async (request, reply) => {
@@ -122,8 +124,8 @@ export async function interviewRoutes(app) {
             const statusMap = {
                 scheduled: 'scheduled',
                 in_progress: 'interview',
-                completed: 'evaluation',
-                cancelled: 'scheduled',
+                completed: 'completed',
+                cancelled: 'cancelled',
             };
             await prisma.candidate.update({
                 where: { id: interview.candidateId },
@@ -151,7 +153,7 @@ export async function interviewRoutes(app) {
             await prisma.interview.update({ where: { id }, data: { status: 'in_progress' } });
             await prisma.candidate.update({
                 where: { id: interview.candidateId },
-                data: { interviewStatus: 'interview' },
+                data: { interviewStatus: 'in_progress' },
             });
         }
         return reply.status(201).send(note);
@@ -168,7 +170,8 @@ export async function interviewRoutes(app) {
     // POST /api/interviews/:id/summary - Create/update interview summary
     app.post('/:id/summary', async (request, reply) => {
         const { id } = request.params;
-        const { keyEvidence, requirementCoverage, strongEvidence, unresolvedQuestions, contradictions, followUpNeeded } = request.body;
+        const body = request.body;
+        const { keyEvidence, requirementCoverage, strongEvidence, unresolvedQuestions, contradictions, followUpNeeded } = body;
         const summary = await prisma.interviewSummary.upsert({
             where: { interviewId: id },
             update: { keyEvidence, requirementCoverage, strongEvidence, unresolvedQuestions, contradictions, followUpNeeded },

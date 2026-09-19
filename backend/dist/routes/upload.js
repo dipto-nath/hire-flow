@@ -14,7 +14,9 @@ export async function uploadRoutes(app) {
         if (!data) {
             return reply.status(400).send({ error: 'No file uploaded' });
         }
-        const { candidateId, type } = data.fields;
+        const fields = data.fields;
+        const candidateId = fields.candidateId?.value;
+        const type = fields.type?.value;
         const parsed = uploadDocumentSchema.safeParse({ candidateId, type });
         if (!parsed.success) {
             return reply.status(400).send({
@@ -36,13 +38,14 @@ export async function uploadRoutes(app) {
         // Extract text based on file type
         let extractedText = '';
         try {
+            const fs = await import('fs/promises');
             if (data.mimetype === 'application/pdf') {
-                const pdfBuffer = await data.file;
+                const pdfBuffer = await fs.readFile(filePath);
                 const pdfData = await pdfParse(pdfBuffer);
                 extractedText = pdfData.text;
             }
             else if (data.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-                const docBuffer = await data.file;
+                const docBuffer = await fs.readFile(filePath);
                 const result = await mammoth.extractRawText({ buffer: docBuffer });
                 extractedText = result.value;
             }
@@ -70,7 +73,7 @@ export async function uploadRoutes(app) {
             });
         }
         // Trigger AI processing (async)
-        processDocumentAsync(document.id, candidateId, candidate.jobId, extractedText, parsed.data.type);
+        processDocumentAsync(document.id, candidateId, candidate.jobId, filePath, data.mimetype, parsed.data.type);
         return reply.status(201).send(document);
     });
     // GET /api/upload/candidate/:candidateId/documents - Get candidate documents
@@ -101,7 +104,7 @@ export async function uploadRoutes(app) {
         return { success: true };
     });
 }
-async function processDocumentAsync(documentId, candidateId, jobId, text, documentType) {
+async function processDocumentAsync(documentId, candidateId, jobId, filePath, mimeType, documentType) {
     try {
         // Update status to processing
         await prisma.candidateDocument.update({
@@ -109,9 +112,9 @@ async function processDocumentAsync(documentId, candidateId, jobId, text, docume
             data: { status: 'processing' },
         });
         // Import AI service dynamically to avoid circular dependencies
-        const { aiService } = await import('../services/aiService.js');
+        const aiService = await import('../services/aiService.js');
         // Process document with AI
-        await aiService.processDocument(documentId, candidateId, jobId, text, documentType);
+        await aiService.processDocument(documentId, candidateId, jobId, filePath, mimeType, documentType);
         // Update status to ready
         await prisma.candidateDocument.update({
             where: { id: documentId },

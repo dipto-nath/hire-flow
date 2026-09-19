@@ -1,6 +1,6 @@
 import { prisma } from '../config/database.js';
 import { mapCandidateSchema, generateQuestionsSchema, generateFollowUpSchema, synthesizeInterviewSchema, generateEvaluationSchema, } from '../schemas/index.js';
-import { aiService } from '../services/aiService.js';
+import * as aiService from '../services/aiService.js';
 export async function aiRoutes(app) {
     // POST /api/ai/map-candidate - Map candidate to job requirements
     app.post('/map-candidate', async (request, reply) => {
@@ -24,7 +24,7 @@ export async function aiRoutes(app) {
             return reply.status(400).send({ error: 'No resume text available for processing' });
         }
         try {
-            await aiService.processDocument(resumeDoc.id, candidate.id, candidate.jobId, resumeDoc.extractedText, 'resume');
+            await aiService.processDocument(resumeDoc.id, candidate.id, candidate.jobId, resumeDoc.filePath || '', 'application/pdf', 'resume');
             return { success: true, message: 'Candidate mapped successfully' };
         }
         catch (error) {

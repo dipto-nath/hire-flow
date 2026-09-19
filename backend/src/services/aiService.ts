@@ -1,6 +1,7 @@
 import { prisma } from '../config/database.js';
 import { env } from '../config/env.js';
 import { GoogleGenAI } from '@google/genai';
+import fs from 'fs';
 
 const ai = new GoogleGenAI({
   apiKey: env.GEMINI_API_KEY,
@@ -89,6 +90,50 @@ interface SearchMatchReason {
 
 // ─── Helper Functions ────────────────────────────────────────────────────────────
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function generateWithRetry(prompt: string, fileData?: { path: string, mimeType: string }, retries = 7): Promise<any> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const parts: any[] = [];
+      if (fileData) {
+        const base64 = fs.readFileSync(fileData.path).toString("base64");
+        parts.push({
+          inlineData: {
+            data: base64,
+            mimeType: fileData.mimeType
+          }
+        });
+      }
+      parts.push({ text: prompt });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: parts,
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.2,
+        }
+      });
+      
+      const responseText = response.text;
+      if (!responseText) throw new Error('No response from Gemini');
+      
+      return JSON.parse(responseText);
+    } catch (error: any) {
+      console.log(`Gemini Error (attempt ${i+1}):`, error.message);
+      if (i === retries - 1) throw error;
+      if (error.status === 429 || error.status === 503 || (error.message && error.message.includes('429'))) {
+        const waitMs = 5000 * Math.pow(2, i);
+        console.log(`Rate limited or busy. Waiting ${waitMs}ms before retry...`);
+        await delay(waitMs);
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
 function getSourceLabel(type: string): string {
   const labels: Record<string, string> = {
     resume: 'Resume',
@@ -138,11 +183,12 @@ export async function processDocument(
   documentId: string,
   candidateId: string,
   jobId: string,
-  text: string,
+  filePath: string,
+  mimeType: string,
   documentType: string
 ) {
   // Extract candidate profile from document
-  const profile = await extractCandidateProfile(text);
+  const profile = await extractCandidateProfile(filePath, mimeType);
 
   const updateData: any = {
     name: profile.name,
@@ -175,7 +221,7 @@ export async function processDocument(
   if (!job) throw new Error('Job not found');
 
   // Match requirements against candidate profile
-  const matches = await matchRequirements(job.requirements, profile, text, documentType);
+  const matches = await matchRequirements(job.requirements, profile, filePath, mimeType, documentType);
 
   // Create evidence records
   for (const match of matches) {
@@ -199,72 +245,62 @@ export async function processDocument(
       insight: match.reasoning,
       source: documentType as any,
       sourceLabel: getSourceLabel(documentType),
-      action: 'Evidence extracted',
+      action: 'Extracted evidence against requirement',
       evidenceTrace: {
-        insight: match.reasoning,
-        sourceDocument: documentType,
-        location: match.location,
-        extractedEvidence: match.excerpt,
-        reasoningContext: match.reasoning,
         requirementId: match.requirementId,
-        requirementLabel: job.requirements.find(r => r.id === match.requirementId)?.label,
+        status: match.status,
+        location: match.location,
       },
     });
   }
 
-  // Calculate group and coverage
-  const { group, requirementCoverage, validationNeeded } = calculateGroupAndCoverage(matches);
+  // Evaluate candidate group
+  const groupResult = await evaluateCandidateGroup(candidateId);
 
+  // Update candidate stage and group
   await prisma.candidate.update({
     where: { id: candidateId },
     data: {
-      group,
-      requirementCoverage,
-      validationNeeded,
       stage: 'screening',
+      group: groupResult.group,
+      requirementCoverage: groupResult.requirementCoverage,
+      validationNeeded: groupResult.validationNeeded,
     },
   });
 
-  // Create summary
-  await createCandidateSummary(candidateId, profile, matches);
+  // Create audit event for group classification
+  await createAuditEvent({
+    candidateId,
+    jobId,
+    insight: groupResult.reasoning,
+    source: 'system',
+    sourceLabel: 'HireFlow Analysis',
+    action: `Classified candidate as ${groupResult.group}`,
+  });
 }
 
 /**
- * Extract candidate profile from resume text using OpenAI
+ * Extract candidate profile from resume file using Gemini
  */
-async function extractCandidateProfile(text: string): Promise<ExtractedCandidateProfile> {
-  const prompt = `Extract the following information from this resume text. Return as JSON with exact fields.
-
-Resume text:
-${text.slice(0, 15000)}
+async function extractCandidateProfile(filePath: string, mimeType: string): Promise<ExtractedCandidateProfile> {
+  const prompt = `Extract the following information from this resume document. Return as JSON with exact fields.
 
 Return JSON with:
-- name: Full name
-- firstName: First name
-- lastName: Last name
-- email: Email address
-- currentRole: Current/most recent job title
-- currentCompany: Current/most recent company
-- location: Location (city, state/country)
-- yearsExperience: Total years of professional experience (number)
-- skills: Array of technical skills (strings)
-- education: Education summary
+- name: string
+- firstName: string
+- lastName: string
+- email: string
+- currentRole: string
+- currentCompany: string
+- location: string
+- yearsExperience: number (total years of professional experience, estimate if necessary)
+- skills: string[] (top 15 relevant technical and professional skills)
+- education: string (highest degree and institution)
 
 If a field is not found, use empty string or 0 for yearsExperience.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.1,
-    }
-  });
+  const parsed = await generateWithRetry(prompt, { path: filePath, mimeType });
 
-  const content = response.text;
-  if (!content) throw new Error('No response from Gemini');
-
-  const parsed = JSON.parse(content);
   return {
     name: parsed.name || '',
     firstName: parsed.firstName || parsed.name?.split(' ')[0] || '',
@@ -285,10 +321,11 @@ If a field is not found, use empty string or 0 for yearsExperience.`;
 async function matchRequirements(
   requirements: Array<{ id: string; label: string; type: string; category: string; description?: string | null }>,
   profile: ExtractedCandidateProfile,
-  text: string,
+  filePath: string,
+  mimeType: string,
   documentType: string
 ): Promise<RequirementMatch[]> {
-  const prompt = `You are an expert technical recruiter. Analyze this candidate's profile against the job requirements.
+  const prompt = `You are an expert technical recruiter. Analyze this candidate's resume document against the job requirements.
 
 Candidate Profile:
 - Name: ${profile.name}
@@ -301,137 +338,97 @@ Candidate Profile:
 Job Requirements:
 ${requirements.map(r => `- ${r.id}: ${r.label} (${r.type}, ${r.category})${r.description ? ': ' + r.description : ''}`).join('\n')}
 
-Full Resume Text:
-${text.slice(0, 15000)}
-
 For each requirement, determine:
-1. status: "verified" | "strong" | "partial" | "needs_validation" | "not_found"
-2. excerpt: The specific text from resume that supports this (max 200 chars)
-3. reasoning: Brief explanation of the match
-4. location: Where in the resume this was found (e.g., "Experience section", "Skills section")
+1. Is there evidence that the candidate meets this requirement?
+2. What is the exact excerpt or section in the resume that supports this?
+3. What is the status? (verified = explicit evidence, strong = implicit but very likely, partial = meets some aspects, needs_validation = uncertain, not_found = no evidence)
 
-Return as JSON array with fields: requirementId, status, excerpt, reasoning, location`;
+Return a JSON array of objects with fields: requirementId, status, excerpt, reasoning, location (where in the document it was found, e.g. "Experience section", "Skills list")
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.2,
-    }
-  });
+Return JSON array:
+[ { "requirementId": "...", "status": "...", "excerpt": "...", "reasoning": "...", "location": "..." } ]`;
 
-  const content = response.text;
-  if (!content) throw new Error('No response from Gemini');
-
-  const parsed = JSON.parse(content);
-  return Array.isArray(parsed) ? parsed : parsed.matches || [];
+  const parsed = await generateWithRetry(prompt, { path: filePath, mimeType });
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 /**
- * Calculate candidate group and coverage based on requirement matches
+ * Evaluate and classify candidate into a group based on requirements
  */
-function calculateGroupAndCoverage(matches: RequirementMatch[]): CandidateGroupResult {
-  const required = matches.filter(m => {
-    const req = matches.find(r => r.requirementId === m.requirementId);
-    return true; // We'll determine from job requirements
-  });
-
-  const verifiedCount = matches.filter(m => m.status === 'verified').length;
-  const strongCount = matches.filter(m => m.status === 'strong').length;
-  const partialCount = matches.filter(m => m.status === 'partial').length;
-  const needsValidationCount = matches.filter(m => m.status === 'needs_validation').length;
-  const notFoundCount = matches.filter(m => m.status === 'not_found').length;
-  const total = matches.length;
-
-  const requirementCoverage = total > 0 
-    ? Math.round(((verifiedCount + strongCount + partialCount * 0.5) / total) * 100)
-    : 0;
-
-  const validationNeeded = needsValidationCount > 0 || partialCount > 0;
-
-  let group: CandidateGroupResult['group'];
-  if (verifiedCount + strongCount >= total * 0.7 && notFoundCount === 0) {
-    group = 'strong_match';
-  } else if (verifiedCount + strongCount + partialCount >= total * 0.5) {
-    group = 'potential_match';
-  } else if (needsValidationCount + partialCount > 0) {
-    group = 'needs_validation';
-  } else {
-    group = 'insufficient_evidence';
-  }
-
-  return { group, requirementCoverage, validationNeeded, reasoning: '' };
-}
-
-/**
- * Create candidate summary
- */
-async function createCandidateSummary(
-  candidateId: string,
-  profile: ExtractedCandidateProfile,
-  matches: RequirementMatch[]
-) {
-  const gaps = matches
-    .filter(m => m.status === 'needs_validation' || m.status === 'partial' || m.status === 'not_found')
-    .map(m => m.requirementId)
-    .join(', ');
-
-  const prompt = `Write a professional candidate summary for a recruiter.
-
-Candidate: ${profile.name}
-Role: ${profile.currentRole} at ${profile.currentCompany}
-Experience: ${profile.yearsExperience} years
-Skills: ${profile.skills.join(', ')}
-Education: ${profile.education}
-
-Requirement gaps: ${gaps || 'None identified'}
-
-Write a concise overview (2-3 sentences), experience summary, skills, projects, education, domain experience, and potential gaps.
-Return JSON with: overview, experience, skills, projects, education, domainExperience, potentialGaps`;
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.3,
-    }
-  });
-
-  const content = response.text;
-  if (!content) return;
-
-  const summary = JSON.parse(content);
-
-  await prisma.candidateSummary.upsert({
-    where: { candidateId },
-    create: { candidateId, ...summary },
-    update: summary,
-  });
-}
-
-/**
- * Map candidate to job requirements - used by /api/ai/map-candidate
- */
-export async function mapCandidateToRequirements(candidateId: string, jobId: string) {
+export async function evaluateCandidateGroup(candidateId: string): Promise<CandidateGroupResult> {
   const candidate = await prisma.candidate.findUnique({
     where: { id: candidateId },
-    include: { documents: true },
+    include: {
+      job: { include: { requirements: true } },
+      evidence: true,
+    },
   });
 
   if (!candidate) throw new Error('Candidate not found');
 
-  const resumeDoc = candidate.documents.find(d => d.type === 'resume' && d.extractedText);
-  if (!resumeDoc || !resumeDoc.extractedText) throw new Error('No resume text available');
+  const requiredReqs = candidate.job.requirements.filter(r => r.type === 'required');
+  const requiredReqIds = requiredReqs.map(r => r.id);
 
-  await processDocument(resumeDoc.id, candidateId, jobId, resumeDoc.extractedText, 'resume');
+  const evidenceMap = new Map<string, string>();
+  candidate.evidence.forEach(e => {
+    if (!evidenceMap.has(e.requirementId) || e.status === 'verified' || e.status === 'strong') {
+      evidenceMap.set(e.requirementId, e.status);
+    }
+  });
 
-  return { success: true };
+  let coveredRequired = 0;
+  let validationNeeded = false;
+
+  for (const reqId of requiredReqIds) {
+    const status = evidenceMap.get(reqId);
+    if (status === 'verified' || status === 'strong') {
+      coveredRequired++;
+    } else if (status === 'partial' || status === 'needs_validation') {
+      validationNeeded = true;
+    }
+  }
+
+  const requirementCoverage = requiredReqIds.length > 0
+    ? Math.round((coveredRequired / requiredReqIds.length) * 100)
+    : 100;
+
+  let initialGroup: 'strong_match' | 'potential_match' | 'needs_validation' | 'insufficient_evidence' = 'insufficient_evidence';
+
+  if (requirementCoverage >= 80 && !validationNeeded) {
+    initialGroup = 'strong_match';
+  } else if (requirementCoverage >= 60) {
+    initialGroup = 'potential_match';
+  } else if (requirementCoverage >= 40 || validationNeeded) {
+    initialGroup = 'needs_validation';
+  }
+
+  const prompt = `You are a technical recruiter. Review the automated classification of this candidate and provide a short, one-sentence reasoning for this classification.
+
+Candidate: ${candidate.name} (${candidate.currentRole} at ${candidate.currentCompany})
+Job: ${candidate.job.title}
+Requirements Coverage: ${requirementCoverage}%
+Initial Classification: ${initialGroup}
+Key Missing/Validation needed requirements: ${requiredReqIds.filter(id => {
+    const s = evidenceMap.get(id);
+    return !s || s === 'not_found' || s === 'needs_validation' || s === 'partial';
+  }).length}
+
+Return JSON with:
+- group: "${initialGroup}" (you may override this if the evidence strongly suggests a different group, must be strong_match, potential_match, needs_validation, or insufficient_evidence)
+- reasoning: string (one sentence explaining why they are in this group)`;
+
+  const parsed = await generateWithRetry(prompt);
+
+  return {
+    group: (parsed.group as any) || initialGroup,
+    requirementCoverage,
+    validationNeeded,
+    reasoning: parsed.reasoning || `Automatically classified as ${initialGroup} based on ${requirementCoverage}% requirement coverage.`,
+  };
 }
 
 /**
- * Generate interview questions for a candidate
+ * Generate interview questions based on candidate profile and missing evidence
  */
 export async function generateInterviewQuestions(
   candidateId: string,
@@ -443,125 +440,47 @@ export async function generateInterviewQuestions(
     include: {
       job: { include: { requirements: true } },
       evidence: { include: { requirement: true } },
-      summary: true,
     },
   });
 
   if (!candidate) throw new Error('Candidate not found');
 
-  const needsValidation = candidate.evidence.filter(
-    e => e.status === 'needs_validation' || e.status === 'partial'
-  );
+  const prompt = `You are an expert technical interviewer preparing questions for a candidate.
 
-  const prompt = `Generate targeted interview questions for this candidate based on their profile and identified gaps.
-
-Candidate: ${candidate.name}
-Role: ${candidate.currentRole} at ${candidate.currentCompany}
+Candidate: ${candidate.name} (${candidate.currentRole} at ${candidate.currentCompany})
 Experience: ${candidate.yearsExperience} years
-Skills: ${candidate.skills.join(', ')}
+Job: ${candidate.job.title}
 
-Requirements needing validation:
-${needsValidation.map(e => `\n- ${e.requirement.label} (${e.requirement.category}): ${e.excerpt}\n  Current status: ${e.status}`).join('\n')}
+Job Requirements & Current Evidence:
+${candidate.job.requirements.map(req => {
+    const evidence = candidate.evidence.find(e => e.requirementId === req.id);
+    const status = evidence?.status || 'not_found';
+    const excerpt = evidence?.excerpt || 'None';
+    return `- ${req.label} (${req.type}): Status: ${status}, Evidence: ${excerpt}`;
+  }).join('\n')}
 
-Candidate Summary:
-${candidate.summary?.overview || 'Not available'}
-${candidate.summary?.potentialGaps || ''}
+Generate 5-7 highly targeted interview questions. Prioritize:
+1. Requirements with 'needs_validation' or 'partial' status
+2. Requirements with 'not_found' status
+3. Deep-dives into their claimed experience (verified/strong status)
 
-Focus areas: ${focusAreas?.join(', ') || 'All gaps'}
+Return as JSON array with fields: text, category (technical, validation, experience, project, behavioral), requirementId (optional), requirementLabel (optional), whyAsk, evidenceContext, expectedEvidence
 
-Generate 5-8 specific interview questions that target these gaps. Each question should:
-1. Reference the candidate's specific background
-2. Target a specific requirement gap
-3. Be open-ended to elicit detailed evidence
-4. Include what specific evidence to look for
+Return JSON array:
+[ { "text": "...", "category": "...", "requirementId": "...", "requirementLabel": "...", "whyAsk": "...", "evidenceContext": "...", "expectedEvidence": "..." } ]`;
 
-Return as JSON array with fields:
-- text: The question
-- category: "technical" | "validation" | "experience" | "project" | "behavioral"
-- requirementId: The requirement ID this targets
-- requirementLabel: The requirement label
-- whyAsk: Why this question is important
-- evidenceContext: What we already know
-- expectedEvidence: What a good answer should contain`;
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.4,
-    }
-  });
-
-  const content = response.text;
-  if (!content) throw new Error('No response from Gemini');
-
-  const parsed = JSON.parse(content);
-  return Array.isArray(parsed) ? parsed : parsed.questions || [];
+  const parsed = await generateWithRetry(prompt);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 /**
- * Generate follow-up question during live interview
+ * Synthesize interview notes and determine requirement coverage
  */
-export async function generateFollowUp(
-  interviewId: string,
-  noteContent: string,
-  requirementLabel: string,
-  requirementId?: string
-): Promise<FollowUpSuggestion> {
+export async function synthesizeInterview(interviewId: string): Promise<InterviewSynthesis> {
   const interview = await prisma.interview.findUnique({
     where: { id: interviewId },
     include: {
-      candidate: { include: { evidence: { include: { requirement: true } } } },
-      notes: { orderBy: { timestamp: 'desc' }, take: 5 },
-    },
-  });
-
-  if (!interview) throw new Error('Interview not found');
-
-  const prompt = `You are an interview assistant. A recruiter just took this note during an interview:
-
-Note: "${noteContent}"
-Requirement being assessed: ${requirementLabel}
-Candidate: ${interview.candidate.name} (${interview.candidate.currentRole} at ${interview.candidate.currentCompany})
-
-Recent notes:
-${interview.notes.slice(0, 3).map(n => `- ${n.content}`).join('\n')}
-
-Does this note fully validate the requirement? If not, generate ONE specific follow-up question to dig deeper.
-
-Return JSON with:
-- question: The follow-up question
-- why: Why this follow-up is needed
-- whatToValidate: What specific evidence to look for
-- requirementId: "${requirementId || ''}"
-- requirementLabel: "${requirementLabel}"`;
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.3,
-    }
-  });
-
-  const content = response.text;
-  if (!content) throw new Error('No response from Gemini');
-
-  return JSON.parse(content);
-}
-
-/**
- * Synthesize interview notes into a structured summary
- */
-export async function synthesizeInterview(
-  interviewId: string
-): Promise<InterviewSynthesis> {
-  const interview = await prisma.interview.findUnique({
-    where: { id: interviewId },
-    include: {
-      candidate: { include: { evidence: { include: { requirement: true } } } },
+      candidate: { include: { evidence: true } },
       job: { include: { requirements: true } },
       notes: { orderBy: { timestamp: 'asc' } },
       questions: true,
@@ -594,19 +513,8 @@ Generate a JSON object with:
 - contradictions: string[] — Any contradictions between resume and interview
 - followUpNeeded: string[] — Areas needing follow-up in future interviews`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.3,
-    }
-  });
-
-  const synthesisContent = response.text;
-  if (!synthesisContent) throw new Error('No response from Gemini');
-
-  return JSON.parse(synthesisContent);
+  const parsed = await generateWithRetry(prompt);
+  return parsed;
 }
 
 /**
@@ -664,19 +572,8 @@ Generate a JSON object with:
 - additionalValidation?: string
 - recommendation?: string`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.2,
-    }
-  });
-
-  const evalContent = response.text;
-  if (!evalContent) throw new Error('No response from Gemini');
-
-  return JSON.parse(evalContent);
+  const parsed = await generateWithRetry(prompt);
+  return parsed;
 }
 
 /**
@@ -779,4 +676,45 @@ export async function searchCandidates(
   }
 
   return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, limit);
+}
+
+/**
+ * Generate follow-up questions during an interview
+ */
+export async function generateFollowUp(
+  interviewId: string,
+  noteContent: string,
+  requirementLabel: string,
+  requirementId?: string
+): Promise<FollowUpSuggestion> {
+  const interview = await prisma.interview.findUnique({
+    where: { id: interviewId },
+    include: {
+      candidate: { include: { evidence: { include: { requirement: true } } } },
+      notes: { orderBy: { timestamp: 'desc' }, take: 5 },
+    },
+  });
+
+  if (!interview) throw new Error('Interview not found');
+
+  const prompt = `You are an interview assistant. A recruiter just took this note during an interview:
+
+Note: "${noteContent}"
+Requirement being assessed: ${requirementLabel}
+Candidate: ${interview.candidate.name} (${interview.candidate.currentRole} at ${interview.candidate.currentCompany})
+
+Recent notes:
+${interview.notes.slice(0, 3).map(n => `- ${n.content}`).join('\n')}
+
+Does this note fully validate the requirement? If not, generate ONE specific follow-up question to dig deeper.
+
+Return JSON with:
+- question: The follow-up question
+- why: Why this follow-up is needed
+- whatToValidate: What specific evidence to look for
+- requirementId: "${requirementId || ''}"
+- requirementLabel: "${requirementLabel}"`;
+
+  const parsed = await generateWithRetry(prompt);
+  return parsed;
 }

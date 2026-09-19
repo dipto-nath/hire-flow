@@ -1,10 +1,54 @@
 import { prisma } from '../config/database.js';
 import { env } from '../config/env.js';
-import OpenAI from 'openai';
-const openai = new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
+import { GoogleGenAI } from '@google/genai';
+import fs from 'fs';
+const ai = new GoogleGenAI({
+    apiKey: env.GEMINI_API_KEY,
 });
 // ─── Helper Functions ────────────────────────────────────────────────────────────
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+async function generateWithRetry(prompt, fileData, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const parts = [];
+            if (fileData) {
+                const base64 = fs.readFileSync(fileData.path).toString("base64");
+                parts.push({
+                    inlineData: {
+                        data: base64,
+                        mimeType: fileData.mimeType
+                    }
+                });
+            }
+            parts.push({ text: prompt });
+            const response = await ai.models.generateContent({
+                model: 'gemini-3.5-flash',
+                contents: parts,
+                config: {
+                    responseMimeType: 'application/json',
+                    temperature: 0.2,
+                }
+            });
+            const responseText = response.text;
+            if (!responseText)
+                throw new Error('No response from Gemini');
+            return JSON.parse(responseText);
+        }
+        catch (error) {
+            console.log(`Gemini Error (attempt ${i + 1}):`, error.message);
+            if (i === retries - 1)
+                throw error;
+            if (error.status === 429 || error.status === 503 || (error.message && error.message.includes('429'))) {
+                const waitMs = 5000 * Math.pow(2, i);
+                console.log(`Rate limited or busy. Waiting ${waitMs}ms before retry...`);
+                await delay(waitMs);
+            }
+            else {
+                throw error;
+            }
+        }
+    }
+}
 function getSourceLabel(type) {
     const labels = {
         resume: 'Resume',
@@ -34,120 +78,112 @@ async function createAuditEvent(data) {
         },
     });
 }
-// ─── Core AI Functions ──────────────────────────────────────────────────────────
+// ─── Core AI Functions ───────────────────────────────────────────────────────────
 /**
- * Process uploaded document with AI to extract candidate profile and map to requirements
+ * Process a document (resume, portfolio, etc.) and extract structured candidate profile
  */
-export async function processDocument(documentId, candidateId, jobId, text, documentType) {
-    if (!text || text.length < 100) {
-        console.log('Document text too short, skipping AI processing');
-        return;
+export async function processDocument(documentId, candidateId, jobId, filePath, mimeType, documentType) {
+    // Extract candidate profile from document
+    const profile = await extractCandidateProfile(filePath, mimeType);
+    const updateData = {
+        name: profile.name,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        currentRole: profile.currentRole,
+        currentCompany: profile.currentCompany,
+        location: profile.location,
+        yearsExperience: profile.yearsExperience,
+        skills: profile.skills,
+        education: profile.education,
+    };
+    if (profile.email) {
+        updateData.email = profile.email;
     }
-    try {
-        const profile = await extractCandidateProfile(text);
-        await prisma.candidate.update({
-            where: { id: candidateId },
+    // Update candidate with extracted info
+    await prisma.candidate.update({
+        where: { id: candidateId },
+        data: updateData,
+    });
+    // Get job requirements
+    const job = await prisma.job.findUnique({
+        where: { id: jobId },
+        include: { requirements: true },
+    });
+    if (!job)
+        throw new Error('Job not found');
+    // Match requirements against candidate profile
+    const matches = await matchRequirements(job.requirements, profile, filePath, mimeType, documentType);
+    // Create evidence records
+    for (const match of matches) {
+        await prisma.evidence.create({
             data: {
-                ...profile,
-                email: profile.email || candidateId.includes('@') ? profile.email : undefined,
-            },
-        });
-        const job = await prisma.job.findUnique({
-            where: { id: jobId },
-            include: { requirements: true },
-        });
-        if (!job)
-            throw new Error('Job not found');
-        const matches = await mapCandidateToRequirements(text, job.requirements);
-        for (const match of matches) {
-            await prisma.evidence.upsert({
-                where: { candidateId_requirementId: { candidateId, requirementId: match.requirementId } },
-                create: {
-                    candidateId,
-                    requirementId: match.requirementId,
-                    status: match.status,
-                    excerpt: match.excerpt,
-                    source: documentType,
-                    sourceLabel: getSourceLabel(documentType),
-                    location: match.location,
-                    notes: match.reasoning,
-                },
-                update: {
-                    status: match.status,
-                    excerpt: match.excerpt,
-                    location: match.location,
-                    notes: match.reasoning,
-                },
-            });
-            await createAuditEvent({
                 candidateId,
-                jobId,
-                insight: `Evidence for "${match.requirementId}" mapped as ${match.status}: ${match.excerpt.slice(0, 100)}...`,
+                requirementId: match.requirementId,
+                status: match.status,
+                excerpt: match.excerpt,
                 source: documentType,
                 sourceLabel: getSourceLabel(documentType),
-                action: 'Evidence extracted',
-                evidenceTrace: {
-                    insight: `Evidence for requirement mapped as ${match.status}`,
-                    sourceDocument: documentId,
-                    location: match.location,
-                    extractedEvidence: match.excerpt,
-                    reasoningContext: match.reasoning,
-                    requirementId: match.requirementId,
-                },
-            });
-        }
-        const groupResult = await determineCandidateGroup(matches);
-        await prisma.candidate.update({
-            where: { id: candidateId },
-            data: {
-                group: groupResult.group,
-                requirementCoverage: groupResult.requirementCoverage,
-                validationNeeded: groupResult.validationNeeded,
+                location: match.location,
+                notes: match.reasoning,
             },
         });
-        const summary = await generateCandidateSummary(candidateId, text, matches);
-        await prisma.candidateSummary.upsert({
-            where: { candidateId },
-            create: { candidateId, ...summary },
-            update: summary,
+        // Create audit event
+        await createAuditEvent({
+            candidateId,
+            jobId,
+            insight: match.reasoning,
+            source: documentType,
+            sourceLabel: getSourceLabel(documentType),
+            action: 'Extracted evidence against requirement',
+            evidenceTrace: {
+                requirementId: match.requirementId,
+                status: match.status,
+                location: match.location,
+            },
         });
-        console.log(`Document ${documentId} processed successfully for candidate ${candidateId}`);
     }
-    catch (error) {
-        console.error('Document processing failed:', error);
-        throw error;
-    }
+    // Evaluate candidate group
+    const groupResult = await evaluateCandidateGroup(candidateId);
+    // Update candidate stage and group
+    await prisma.candidate.update({
+        where: { id: candidateId },
+        data: {
+            stage: 'screening',
+            group: groupResult.group,
+            requirementCoverage: groupResult.requirementCoverage,
+            validationNeeded: groupResult.validationNeeded,
+        },
+    });
+    // Create audit event for group classification
+    await createAuditEvent({
+        candidateId,
+        jobId,
+        insight: groupResult.reasoning,
+        source: 'system',
+        sourceLabel: 'HireFlow Analysis',
+        action: `Classified candidate as ${groupResult.group}`,
+    });
 }
 /**
- * Extract structured candidate profile from resume text
+ * Extract candidate profile from resume file using Gemini
  */
-async function extractCandidateProfile(text) {
-    const prompt = `Extract the following information from this resume text. Return ONLY valid JSON.
+async function extractCandidateProfile(filePath, mimeType) {
+    const prompt = `Extract the following information from this resume document. Return as JSON with exact fields.
 
-Fields to extract:
-- name: Full name
-- firstName: First name
-- lastName: Last name
-- email: Email address
-- currentRole: Current job title
-- currentCompany: Current company
-- location: Location (city, state/country)
-- yearsExperience: Total years of professional experience (number)
-- skills: Array of technical skills (programming languages, frameworks, tools)
-- education: Education details (degree, school, year)
+Return JSON with:
+- name: string
+- firstName: string
+- lastName: string
+- email: string
+- currentRole: string
+- currentCompany: string
+- location: string
+- yearsExperience: number (total years of professional experience, estimate if necessary)
+- skills: string[] (top 15 relevant technical and professional skills)
+- education: string (highest degree and institution)
 
-Resume text:
-${text.slice(0, 15000)}`;
-    const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-    });
-    const content = response.choices[0].message.content;
-    if (!content)
-        throw new Error('No response from OpenAI');
-    const parsed = JSON.parse(content);
+If a field is not found, use empty string or 0 for yearsExperience.`;
+    const parsed = await generateWithRetry(prompt, { path: filePath, mimeType });
     return {
         name: parsed.name || '',
         firstName: parsed.firstName || parsed.name?.split(' ')[0] || '',
@@ -162,175 +198,314 @@ ${text.slice(0, 15000)}`;
     };
 }
 /**
- * Map candidate experience to job requirements
+ * Match job requirements against candidate profile
  */
-async function mapCandidateToRequirements(resumeText, requirements) {
-    const prompt = `You are an expert technical recruiter. Analyze this resume against the job requirements and find evidence for each requirement.
+async function matchRequirements(requirements, profile, filePath, mimeType, documentType) {
+    const prompt = `You are an expert technical recruiter. Analyze this candidate's resume document against the job requirements.
 
-Resume text:
-${resumeText.slice(0, 20000)}
+Candidate Profile:
+- Name: ${profile.name}
+- Role: ${profile.currentRole} at ${profile.currentCompany}
+- Location: ${profile.location}
+- Experience: ${profile.yearsExperience} years
+- Skills: ${profile.skills.join(', ')}
+- Education: ${profile.education}
 
 Job Requirements:
-${requirements.map(r => `- ${r.id} (${r.type}, ${r.category}): ${r.label} - ${r.description || ''}`).join('\n')}
+${requirements.map(r => `- ${r.id}: ${r.label} (${r.type}, ${r.category})${r.description ? ': ' + r.description : ''}`).join('\n')}
 
-For EACH requirement, return a JSON object with:
-- requirementId: The requirement ID
-- status: One of "verified" (clear direct evidence), "strong" (strong indirect evidence), "partial" (some evidence but incomplete), "needs_validation" (claims exist but need verification), "not_found" (no evidence)
-- excerpt: The specific text from resume that supports this (or "No evidence found")
-- reasoning: Brief explanation of why this status was assigned
-- location: Where in the resume this was found (e.g., "Experience section - Zenpay 2023-present")
+For each requirement, determine:
+1. Is there evidence that the candidate meets this requirement?
+2. What is the exact excerpt or section in the resume that supports this?
+3. What is the status? (verified = explicit evidence, strong = implicit but very likely, partial = meets some aspects, needs_validation = uncertain, not_found = no evidence)
 
-Return as JSON array of objects.`;
-    const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-    });
-    const content = response.choices[0].message.content;
-    if (!content)
-        throw new Error('No response from OpenAI');
-    const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : parsed.matches || [];
+Return a JSON array of objects with fields: requirementId, status, excerpt, reasoning, location (where in the document it was found, e.g. "Experience section", "Skills list")
+
+Return JSON array:
+[ { "requirementId": "...", "status": "...", "excerpt": "...", "reasoning": "...", "location": "..." } ]`;
+    const parsed = await generateWithRetry(prompt, { path: filePath, mimeType });
+    return Array.isArray(parsed) ? parsed : [];
 }
 /**
- * Determine candidate group based on requirement matches
+ * Evaluate and classify candidate into a group based on requirements
  */
-async function determineCandidateGroup(matches) {
-    const verifiedCount = matches.filter(m => m.status === 'verified' || m.status === 'strong').length;
-    const partialCount = matches.filter(m => m.status === 'partial').length;
-    const needsValidationCount = matches.filter(m => m.status === 'needs_validation').length;
-    const total = matches.length;
-    const coverage = total > 0 ? Math.round(((verifiedCount + partialCount) / total) * 100) : 0;
-    let group;
-    let reasoning;
-    if (verifiedCount >= total * 0.7 && needsValidationCount === 0) {
-        group = 'strong_match';
-        reasoning = `Strong evidence for ${verifiedCount}/${total} requirements. High confidence match.`;
+export async function evaluateCandidateGroup(candidateId) {
+    const candidate = await prisma.candidate.findUnique({
+        where: { id: candidateId },
+        include: {
+            job: { include: { requirements: true } },
+            evidence: true,
+        },
+    });
+    if (!candidate)
+        throw new Error('Candidate not found');
+    const requiredReqs = candidate.job.requirements.filter(r => r.type === 'required');
+    const requiredReqIds = requiredReqs.map(r => r.id);
+    const evidenceMap = new Map();
+    candidate.evidence.forEach(e => {
+        if (!evidenceMap.has(e.requirementId) || e.status === 'verified' || e.status === 'strong') {
+            evidenceMap.set(e.requirementId, e.status);
+        }
+    });
+    let coveredRequired = 0;
+    let validationNeeded = false;
+    for (const reqId of requiredReqIds) {
+        const status = evidenceMap.get(reqId);
+        if (status === 'verified' || status === 'strong') {
+            coveredRequired++;
+        }
+        else if (status === 'partial' || status === 'needs_validation') {
+            validationNeeded = true;
+        }
     }
-    else if (verifiedCount + partialCount >= total * 0.5 && needsValidationCount <= 2) {
-        group = 'potential_match';
-        reasoning = `Good evidence for ${verifiedCount + partialCount}/${total} requirements. Some gaps need validation.`;
+    const requirementCoverage = requiredReqIds.length > 0
+        ? Math.round((coveredRequired / requiredReqIds.length) * 100)
+        : 100;
+    let initialGroup = 'insufficient_evidence';
+    if (requirementCoverage >= 80 && !validationNeeded) {
+        initialGroup = 'strong_match';
     }
-    else if (needsValidationCount > 0 || partialCount > 0) {
-        group = 'needs_validation';
-        reasoning = `${needsValidationCount} requirements need validation, ${partialCount} have partial evidence.`;
+    else if (requirementCoverage >= 60) {
+        initialGroup = 'potential_match';
     }
-    else {
-        group = 'insufficient_evidence';
-        reasoning = `Only ${verifiedCount}/${total} requirements have evidence. Significant gaps.`;
+    else if (requirementCoverage >= 40 || validationNeeded) {
+        initialGroup = 'needs_validation';
     }
+    const prompt = `You are a technical recruiter. Review the automated classification of this candidate and provide a short, one-sentence reasoning for this classification.
+
+Candidate: ${candidate.name} (${candidate.currentRole} at ${candidate.currentCompany})
+Job: ${candidate.job.title}
+Requirements Coverage: ${requirementCoverage}%
+Initial Classification: ${initialGroup}
+Key Missing/Validation needed requirements: ${requiredReqIds.filter(id => {
+        const s = evidenceMap.get(id);
+        return !s || s === 'not_found' || s === 'needs_validation' || s === 'partial';
+    }).length}
+
+Return JSON with:
+- group: "${initialGroup}" (you may override this if the evidence strongly suggests a different group, must be strong_match, potential_match, needs_validation, or insufficient_evidence)
+- reasoning: string (one sentence explaining why they are in this group)`;
+    const parsed = await generateWithRetry(prompt);
     return {
-        group,
-        requirementCoverage: coverage,
-        validationNeeded: needsValidationCount > 0 || partialCount > total * 0.3,
-        reasoning,
+        group: parsed.group || initialGroup,
+        requirementCoverage,
+        validationNeeded,
+        reasoning: parsed.reasoning || `Automatically classified as ${initialGroup} based on ${requirementCoverage}% requirement coverage.`,
     };
 }
 /**
- * Generate candidate summary
- */
-async function generateCandidateSummary(candidateId, resumeText, matches) {
-    const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
-    if (!candidate)
-        throw new Error('Candidate not found');
-    const prompt = `Generate a structured candidate summary for a recruiter. Be concise but specific.
-
-Candidate: ${candidate.name}
-Current Role: ${candidate.currentRole} at ${candidate.currentCompany}
-Experience: ${candidate.yearsExperience} years
-Skills: ${candidate.skills.join(', ')}
-
-Resume excerpt:
-${resumeText.slice(0, 10000)}
-
-Requirement Matches:
-${matches.map(m => `- ${m.requirementId}: ${m.status} - ${m.excerpt.slice(0, 200)}`).join('\n')}
-
-Return JSON with these fields:
-- overview: 2-3 sentence professional summary
-- experience: Summary of relevant experience
-- skills: Key technical skills
-- projects: Notable projects mentioned
-- education: Education background
-- domainExperience: Industry/domain experience
-- potentialGaps: Areas needing validation or missing experience`;
-    const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.3,
-    });
-    const content = response.choices[0].message.content;
-    if (!content)
-        throw new Error('No response from OpenAI');
-    return JSON.parse(content);
-}
-/**
- * Generate interview questions based on candidate gaps
+ * Generate interview questions based on candidate profile and missing evidence
  */
 export async function generateInterviewQuestions(candidateId, jobId, focusAreas) {
     const candidate = await prisma.candidate.findUnique({
         where: { id: candidateId },
         include: {
+            job: { include: { requirements: true } },
             evidence: { include: { requirement: true } },
-            summary: true,
         },
     });
-    const job = await prisma.job.findUnique({
-        where: { id: jobId },
-        include: { requirements: true },
-    });
-    if (!candidate || !job)
-        throw new Error('Candidate or job not found');
-    const needsValidation = candidate.evidence.filter(e => e.status === 'needs_validation' || e.status === 'partial');
-    const prompt = `Generate targeted interview questions for this candidate based on their profile and identified gaps.
+    if (!candidate)
+        throw new Error('Candidate not found');
+    const prompt = `You are an expert technical interviewer preparing questions for a candidate.
 
-Candidate: ${candidate.name}
-Role: ${candidate.currentRole} at ${candidate.currentCompany}
+Candidate: ${candidate.name} (${candidate.currentRole} at ${candidate.currentCompany})
 Experience: ${candidate.yearsExperience} years
-Skills: ${candidate.skills.join(', ')}
+Job: ${candidate.job.title}
 
-Requirements needing validation:
-${needsValidation.map(e => `
-- ${e.requirement.label} (${e.requirement.category}): ${e.excerpt}
-  Current status: ${e.status}
-`).join('\n')}
+Job Requirements & Current Evidence:
+${candidate.job.requirements.map(req => {
+        const evidence = candidate.evidence.find(e => e.requirementId === req.id);
+        const status = evidence?.status || 'not_found';
+        const excerpt = evidence?.excerpt || 'None';
+        return `- ${req.label} (${req.type}): Status: ${status}, Evidence: ${excerpt}`;
+    }).join('\n')}
 
-Candidate Summary:
-${candidate.summary?.overview || 'Not available'}
-${candidate.summary?.potentialGaps || ''}
+Generate 5-7 highly targeted interview questions. Prioritize:
+1. Requirements with 'needs_validation' or 'partial' status
+2. Requirements with 'not_found' status
+3. Deep-dives into their claimed experience (verified/strong status)
 
-Focus areas: ${focusAreas?.join(', ') || 'All gaps'}
+Return as JSON array with fields: text, category (technical, validation, experience, project, behavioral), requirementId (optional), requirementLabel (optional), whyAsk, evidenceContext, expectedEvidence
 
-Generate 5-8 specific interview questions that target these gaps. Each question should:
-1. Reference the candidate's specific background
-2. Target a specific requirement gap
-3. Be open-ended to elicit detailed evidence
-4. Include what specific evidence to look for
-
-Return as JSON array with fields:
-- text: The question
-- category: "technical" | "validation" | "experience" | "project" | "behavioral"
-- requirementId: The requirement ID this targets
-- requirementLabel: The requirement label
-- whyAsk: Why this question is important
-- evidenceContext: What we already know
-- expectedEvidence: What a good answer should contain`;
-    const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.4,
-    });
-    const content = response.choices[0].message.content;
-    if (!content)
-        throw new Error('No response from OpenAI');
-    const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : parsed.questions || [];
+Return JSON array:
+[ { "text": "...", "category": "...", "requirementId": "...", "requirementLabel": "...", "whyAsk": "...", "evidenceContext": "...", "expectedEvidence": "..." } ]`;
+    const parsed = await generateWithRetry(prompt);
+    return Array.isArray(parsed) ? parsed : [];
 }
 /**
- * Generate follow-up question during live interview
+ * Synthesize interview notes and determine requirement coverage
+ */
+export async function synthesizeInterview(interviewId) {
+    const interview = await prisma.interview.findUnique({
+        where: { id: interviewId },
+        include: {
+            candidate: { include: { evidence: true } },
+            job: { include: { requirements: true } },
+            notes: { orderBy: { timestamp: 'asc' } },
+            questions: true,
+        },
+    });
+    if (!interview)
+        throw new Error('Interview not found');
+    const prompt = `You are an interview synthesis assistant. Analyze the following interview and produce a structured summary.
+
+Candidate: ${interview.candidate.name} (${interview.candidate.currentRole} at ${interview.candidate.currentCompany})
+Job: ${interview.job.title}
+Interviewers: ${interview.interviewers.join(', ')}
+Interview Date: ${interview.scheduledAt ? new Date(interview.scheduledAt).toLocaleDateString() : 'Not scheduled'}
+
+Job Requirements:
+${interview.job.requirements.map(r => `- ${r.label} (${r.type}, ${r.category})`).join('\n')}
+
+Interview Notes:
+${interview.notes.map(n => `- ${n.content} (${n.type}, requirement: ${n.requirementLabel || 'general'})`).join('\n')}
+
+Candidate Evidence (from resume):
+${interview.candidate.evidence.map(e => `- ${e.requirementId}: ${e.excerpt} [${e.status}]`).join('\n')}
+
+Generate a JSON object with:
+- keyEvidence: string[] — Key pieces of evidence from the interview
+- requirementCoverage: Array of { requirementId, label, status: "covered" | "partial" | "not_covered" }
+- strongEvidence: string[] — Strong positive evidence
+- unresolvedQuestions: string[] — Questions that remain unanswered
+- contradictions: string[] — Any contradictions between resume and interview
+- followUpNeeded: string[] — Areas needing follow-up in future interviews`;
+    const parsed = await generateWithRetry(prompt);
+    return parsed;
+}
+/**
+ * Generate evaluation report for a candidate
+ */
+export async function generateEvaluationReport(candidateId, interviewId) {
+    const candidate = await prisma.candidate.findUnique({
+        where: { id: candidateId },
+        include: {
+            job: { include: { requirements: true } },
+            evidence: { include: { requirement: true } },
+            interviews: {
+                include: { questions: true, notes: true, summary: true },
+                where: interviewId ? { id: interviewId } : undefined,
+                orderBy: { createdAt: 'desc' },
+            },
+        },
+    });
+    if (!candidate)
+        throw new Error('Candidate not found');
+    const job = candidate.job;
+    const latestInterview = candidate.interviews[0];
+    const prompt = `You are an evaluation report generator. Create a comprehensive evaluation for a hiring decision.
+
+Candidate: ${candidate.name} (${candidate.currentRole} at ${candidate.currentCompany})
+Experience: ${candidate.yearsExperience} years
+Job: ${job.title}
+Department: ${job.department}
+
+Job Requirements:
+${job.requirements.map(r => `- ${r.label} (${r.type}, ${r.category}): ${r.description || ''}`).join('\n')}
+
+Candidate Evidence (from resume):
+${candidate.evidence.map(e => `- ${e.requirementId} (${e.requirement.label}): ${e.excerpt} [${e.status}]`).join('\n')}
+
+${latestInterview ? `
+Latest Interview (${latestInterview.status}):
+Questions: ${latestInterview.questions.map(q => `- ${q.text} (${q.category})`).join('\n')}
+Notes: ${latestInterview.notes.map(n => `- ${n.content} (req: ${n.requirementLabel || 'general'})`).join('\n')}
+Summary: ${latestInterview.summary ? JSON.stringify(latestInterview.summary) : 'Not available'}
+` : 'No interview conducted yet.'}
+
+Generate a JSON object with:
+- requirementRows: Array of { requirementId, requirementLabel, evidence, confidence: "high"|"medium"|"low"|"none", status: "verified"|"strong"|"partial"|"needs_validation"|"not_found", source }
+- interviewEvidence: string — Summary of interview evidence
+- outstandingValidation: string[] — Requirements needing further validation
+- overallRating?: "strong_evidence"|"meets_requirements"|"partially_meets"|"needs_more_evidence"|"does_not_meet"
+- strengths?: string
+- concerns?: string
+- additionalValidation?: string
+- recommendation?: string`;
+    const parsed = await generateWithRetry(prompt);
+    return parsed;
+}
+/**
+ * Search candidates using natural language query
+ */
+export async function searchCandidates(query, jobId, limit = 10) {
+    const where = {};
+    if (jobId)
+        where.jobId = jobId;
+    const candidates = await prisma.candidate.findMany({
+        where,
+        include: {
+            job: { select: { id: true, title: true, requirements: true } },
+            evidence: { include: { requirement: true } },
+        },
+        take: 100,
+    });
+    const lowerQuery = query.toLowerCase();
+    const results = [];
+    for (const candidate of candidates) {
+        const matchReasons = [];
+        let score = 0;
+        // Skill matching
+        candidate.skills.forEach(skill => {
+            if (lowerQuery.includes(skill.toLowerCase())) {
+                matchReasons.push({ label: skill, source: 'Resume', detail: 'Listed as a primary skill' });
+                score += 25;
+            }
+        });
+        // Experience matching
+        const yearMatch = lowerQuery.match(/(\d+)\+?\s*years?/);
+        if (yearMatch) {
+            const requiredYears = parseInt(yearMatch[1]);
+            if (candidate.yearsExperience >= requiredYears) {
+                matchReasons.push({
+                    label: `${candidate.yearsExperience} years experience`,
+                    source: 'Resume',
+                    detail: `Meets the ${requiredYears}+ year requirement`,
+                });
+                score += 20;
+            }
+        }
+        // Domain/industry matching
+        if (lowerQuery.includes('fintech') || lowerQuery.includes('finance')) {
+            const fintechCompanies = ['Zenpay', 'N26', 'Razorpay', 'Flutterwave', 'Klarna', 'Stripe', 'PayPal'];
+            if (candidate.currentCompany && fintechCompanies.some(c => candidate.currentCompany.includes(c))) {
+                matchReasons.push({ label: 'Fintech experience', source: 'Resume', detail: `Works at ${candidate.currentCompany}` });
+                score += 30;
+            }
+        }
+        // Missing requirement / validation needed
+        if (lowerQuery.includes('missing') || lowerQuery.includes('needs validation')) {
+            if (candidate.validationNeeded) {
+                matchReasons.push({ label: 'Needs validation', source: 'HireFlow Analysis', detail: 'Has unresolved requirements' });
+                score += 15;
+            }
+        }
+        // Interview status
+        if (lowerQuery.includes('interview')) {
+            if (candidate.interviewStatus === 'completed' || candidate.interviewStatus === 'scheduled') {
+                matchReasons.push({ label: `Interview ${candidate.interviewStatus}`, source: 'Interview records', detail: `Interview status: ${candidate.interviewStatus}` });
+                score += 20;
+            }
+        }
+        // Strong match bonus
+        if (candidate.group === 'strong_match')
+            score += 10;
+        if (matchReasons.length > 0 || score > 0) {
+            results.push({ candidate, matchReasons, relevanceScore: Math.min(score, 100) });
+        }
+    }
+    // If no specific matches, return some candidates
+    if (results.length === 0) {
+        return candidates.slice(0, limit).map(candidate => ({
+            candidate,
+            matchReasons: [{ label: candidate.skills[0] ?? 'General match', source: 'Resume', detail: 'Candidate in active pool' }],
+            relevanceScore: 30,
+        }));
+    }
+    return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, limit);
+}
+/**
+ * Generate follow-up questions during an interview
  */
 export async function generateFollowUp(interviewId, noteContent, requirementLabel, requirementId) {
     const interview = await prisma.interview.findUnique({
@@ -359,15 +534,7 @@ Return JSON with:
 - whatToValidate: What specific evidence to look for
 - requirementId: "${requirementId || ''}"
 - requirementLabel: "${requirementLabel}"`;
-    const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.3,
-    });
-    const content = response.choices[0].message.content;
-    if (!content)
-        throw new Error('No response from OpenAI');
-    return JSON.parse(content);
+    const parsed = await generateWithRetry(prompt);
+    return parsed;
 }
 //# sourceMappingURL=aiService.js.map

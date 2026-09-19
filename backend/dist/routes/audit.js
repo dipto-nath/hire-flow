@@ -84,7 +84,8 @@ export async function auditRoutes(app) {
     });
     // POST /api/audit - Create manual audit event
     app.post('/', async (request, reply) => {
-        const { candidateId, jobId, insight, source, sourceLabel, action, evidenceTrace } = request.body;
+        const body = request.body;
+        const { candidateId, jobId, insight, source, sourceLabel, action, evidenceTrace } = body;
         if (!candidateId || !insight || !source || !sourceLabel || !action) {
             return reply.status(400).send({ error: 'Missing required fields' });
         }
@@ -97,7 +98,7 @@ export async function auditRoutes(app) {
                 jobId,
                 jobTitle: job?.title,
                 insight,
-                source,
+                source: source,
                 sourceLabel,
                 generatedBy: 'recruiter',
                 action,

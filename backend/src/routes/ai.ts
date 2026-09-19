@@ -46,7 +46,8 @@ export async function aiRoutes(app: FastifyInstance) {
         resumeDoc.id,
         candidate.id,
         candidate.jobId,
-        resumeDoc.extractedText || '',
+        resumeDoc.filePath || '',
+        'application/pdf',
         'resume'
       );
 

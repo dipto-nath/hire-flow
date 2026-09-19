@@ -1,6 +1,6 @@
 import { prisma } from '../config/database.js';
 import { searchSchema } from '../schemas/index.js';
-import { aiService } from '../services/aiService.js';
+import * as aiService from '../services/aiService.js';
 export async function searchRoutes(app) {
     // POST /api/search - Natural language search
     app.post('/', async (request, reply) => {
@@ -44,7 +44,8 @@ export async function searchRoutes(app) {
         const roles = new Set();
         candidates.forEach(c => {
             c.skills.forEach(s => skills.add(s));
-            roles.add(c.currentRole);
+            if (c.currentRole)
+                roles.add(c.currentRole);
         });
         return {
             skills: Array.from(skills).slice(0, 20),

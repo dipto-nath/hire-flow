@@ -23,8 +23,8 @@ export async function jobRoutes(app) {
         return {
             jobs: jobs.map(job => ({
                 ...job,
-                candidateCount: job._count.candidates,
-                interviewCount: job._count.interviews,
+                candidateCount: job._count?.candidates ?? 0,
+                interviewCount: job._count?.interviews ?? 0,
             })),
             total,
             limit,
@@ -80,7 +80,6 @@ export async function jobRoutes(app) {
         // Create audit event
         await prisma.auditEvent.create({
             data: {
-                candidateId: '', // Will be updated when candidates are added
                 candidateName: 'System',
                 jobId: job.id,
                 jobTitle: job.title,

@@ -11,6 +11,8 @@ export async function candidateRoutes(app) {
     // GET /api/candidates - List all candidates (with optional jobId filter)
     app.get('/', async (request) => {
         const { jobId, stage, group, limit = 50, offset = 0 } = request.query;
+        const parsedLimit = limit ? (typeof limit === 'string' ? parseInt(limit, 10) : limit) : 50;
+        const parsedOffset = offset ? parseInt(offset, 10) : 0;
         const where = {};
         if (jobId)
             where.jobId = jobId;
@@ -29,12 +31,12 @@ export async function candidateRoutes(app) {
                     _count: { select: { interviews: true } },
                 },
                 orderBy: { addedAt: 'desc' },
-                take: limit,
-                skip: offset,
+                take: parsedLimit,
+                skip: parsedOffset,
             }),
             prisma.candidate.count({ where }),
         ]);
-        return { candidates, total, limit, offset };
+        return { candidates, total, limit: parsedLimit, offset: parsedOffset };
     });
     // GET /api/candidates/:id - Get candidate by ID
     app.get('/:id', async (request, reply) => {
@@ -42,7 +44,9 @@ export async function candidateRoutes(app) {
         const candidate = await prisma.candidate.findUnique({
             where: { id },
             include: {
-                job: true,
+                job: {
+                    include: { requirements: true }
+                },
                 evidence: { include: { requirement: true } },
                 documents: true,
                 summary: true,
@@ -75,16 +79,14 @@ export async function candidateRoutes(app) {
                 details: parsed.error.flatten().fieldErrors,
             });
         }
-        const { firstName, lastName, name, ...rest } = parsed.data;
-        const fullName = name || `${firstName} ${lastName}`.trim();
+        const { name, ...rest } = parsed.data;
+        const fullName = name || '';
         const candidate = await prisma.candidate.create({
             data: {
                 ...rest,
                 name: fullName,
-                firstName: firstName || fullName.split(' ')[0],
-                lastName: lastName || fullName.split(' ').slice(1).join(' '),
-                initials: fullName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2),
-                avatarColor: getRandomColor(),
+                firstName: fullName.split(' ')[0] || '',
+                lastName: fullName.split(' ').slice(1).join(' ') || '',
             },
             include: { job: true },
         });
