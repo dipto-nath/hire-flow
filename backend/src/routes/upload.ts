@@ -17,9 +17,9 @@ export async function uploadRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'No file uploaded' });
     }
 
-    const fields = data.fields as unknown as Record<string, string>;
-    const candidateId = fields.candidateId;
-    const type = fields.type;
+    const fields = data.fields as any;
+    const candidateId = fields.candidateId?.value;
+    const type = fields.type?.value;
     
     const parsed = uploadDocumentSchema.safeParse({ candidateId, type });
     if (!parsed.success) {
@@ -46,22 +46,13 @@ export async function uploadRoutes(app: FastifyInstance) {
     // Extract text based on file type
     let extractedText = '';
     try {
+      const fs = await import('fs/promises');
       if (data.mimetype === 'application/pdf') {
-        const fileStream = await data.file;
-        const chunks: Buffer[] = [];
-        for await (const chunk of fileStream) {
-          chunks.push(chunk);
-        }
-        const pdfBuffer = Buffer.concat(chunks);
+        const pdfBuffer = await fs.readFile(filePath);
         const pdfData = await pdfParse(pdfBuffer);
         extractedText = pdfData.text;
       } else if (data.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-        const fileStream = await data.file;
-        const chunks: Buffer[] = [];
-        for await (const chunk of fileStream) {
-          chunks.push(chunk);
-        }
-        const docBuffer = Buffer.concat(chunks);
+        const docBuffer = await fs.readFile(filePath);
         const result = await mammoth.extractRawText({ buffer: docBuffer });
         extractedText = result.value;
       }
@@ -91,7 +82,7 @@ export async function uploadRoutes(app: FastifyInstance) {
     }
 
     // Trigger AI processing (async)
-    processDocumentAsync(document.id, candidateId, candidate.jobId, extractedText, parsed.data.type);
+    processDocumentAsync(document.id, candidateId, candidate.jobId, filePath, data.mimetype, parsed.data.type);
 
     return reply.status(201).send(document);
   });
@@ -135,7 +126,8 @@ async function processDocumentAsync(
   documentId: string,
   candidateId: string,
   jobId: string,
-  text: string,
+  filePath: string,
+  mimeType: string,
   documentType: string
 ) {
   try {
@@ -149,7 +141,7 @@ async function processDocumentAsync(
     const aiService = await import('../services/aiService.js');
     
     // Process document with AI
-    await aiService.processDocument(documentId, candidateId, jobId, text, documentType);
+    await aiService.processDocument(documentId, candidateId, jobId, filePath, mimeType, documentType);
 
     // Update status to ready
     await prisma.candidateDocument.update({

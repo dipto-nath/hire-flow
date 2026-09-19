@@ -27,6 +27,9 @@ export async function interviewRoutes(app: FastifyInstance) {
     if (jobId) where.jobId = jobId;
     if (status) where.status = status;
 
+    const parsedLimit = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+    const parsedOffset = typeof offset === 'string' ? parseInt(offset, 10) : offset;
+
     const [interviews, total] = await Promise.all([
       prisma.interview.findMany({
         where,
@@ -38,13 +41,13 @@ export async function interviewRoutes(app: FastifyInstance) {
           summary: true,
         },
         orderBy: { createdAt: 'desc' },
-        take: limit,
-        skip: offset,
+        take: parsedLimit,
+        skip: parsedOffset,
       }),
       prisma.interview.count({ where }),
     ]);
 
-    return { interviews, total, limit, offset };
+    return { interviews, total, limit: parsedLimit, offset: parsedOffset };
   });
 
   // GET /api/interviews/:id - Get interview by ID

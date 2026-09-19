@@ -28,9 +28,12 @@ export async function candidateRoutes(app: FastifyInstance) {
       jobId?: string;
       stage?: string;
       group?: string;
-      limit?: number;
-      offset?: number;
+      limit?: string;
+      offset?: string;
     };
+
+    const parsedLimit = limit ? parseInt(limit, 10) : 50;
+    const parsedOffset = offset ? parseInt(offset, 10) : 0;
 
     const where: any = {};
     if (jobId) where.jobId = jobId;
@@ -48,13 +51,13 @@ export async function candidateRoutes(app: FastifyInstance) {
           _count: { select: { interviews: true } },
         },
         orderBy: { addedAt: 'desc' },
-        take: limit,
-        skip: offset,
+        take: parsedLimit,
+        skip: parsedOffset,
       }),
       prisma.candidate.count({ where }),
     ]);
 
-    return { candidates, total, limit, offset };
+    return { candidates, total, limit: parsedLimit, offset: parsedOffset };
   });
 
   // GET /api/candidates/:id - Get candidate by ID
@@ -64,7 +67,9 @@ export async function candidateRoutes(app: FastifyInstance) {
     const candidate = await prisma.candidate.findUnique({
       where: { id },
       include: {
-        job: true,
+        job: {
+          include: { requirements: true }
+        },
         evidence: { include: { requirement: true } },
         documents: true,
         summary: true,

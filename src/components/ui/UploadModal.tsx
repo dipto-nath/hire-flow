@@ -11,7 +11,7 @@ interface UploadModalProps {
 }
 
 export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComplete }: UploadModalProps) {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,30 +41,41 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const droppedFile = e.dataTransfer.files[0];
-    validateAndSetFile(droppedFile);
+    if (e.dataTransfer.files) {
+      Array.from(e.dataTransfer.files).forEach(validateAndAddFile);
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      validateAndSetFile(e.target.files[0]);
+    if (e.target.files) {
+      Array.from(e.target.files).forEach(validateAndAddFile);
     }
   };
 
-  const validateAndSetFile = (selectedFile: File) => {
+  const validateAndAddFile = (selectedFile: File) => {
     setError(null);
     const validTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
     if (!validTypes.includes(selectedFile.type)) {
-      setError('Please upload a PDF or DOCX file.');
+      setError('One or more files have an invalid type. Only PDF and DOCX are allowed.');
       return;
     }
-    setFile(selectedFile);
+    setFiles(prev => {
+      // Prevent duplicates based on name and size
+      if (prev.some(f => f.name === selectedFile.name && f.size === selectedFile.size)) {
+        return prev;
+      }
+      return [...prev, selectedFile];
+    });
+  };
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleUpload = async () => {
     const targetJobId = initialJobId || selectedJobId;
-    if (!file || !targetJobId) {
-      setError('Please select a job role first.');
+    if (files.length === 0 || !targetJobId) {
+      setError('Please select a job role and at least one file.');
       return;
     }
 
@@ -72,25 +83,27 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
     setError(null);
 
     try {
-      // 1. Create a placeholder candidate
-      const candidateData = {
-        jobId: targetJobId,
-        name: file.name.split('.')[0] || 'Processing Resume...',
-        email: 'pending@hireflow.ai',
-      };
-      const candidateRes = await api.candidates.create(candidateData);
-      
-      if (!candidateRes || !candidateRes.id) {
-        throw new Error('Failed to initialize candidate record.');
-      }
+      await Promise.all(files.map(async (file) => {
+        // 1. Create a placeholder candidate
+        const candidateData = {
+          jobId: targetJobId,
+          name: file.name.split('.')[0] || 'Processing Resume...',
+          email: `pending-${Date.now()}-${Math.random().toString(36).substring(7)}@hireflow.ai`,
+        };
+        const candidateRes = await api.candidates.create(candidateData);
+        
+        if (!candidateRes || !candidateRes.id) {
+          throw new Error(`Failed to initialize candidate record for ${file.name}`);
+        }
 
-      // 2. Upload the document to trigger AI processing
-      await api.upload.document(file, candidateRes.id, 'resume');
+        // 2. Upload the document to trigger AI processing
+        await api.upload.document(file, candidateRes.id, 'resume');
+      }));
 
       // 3. Complete
       onUploadComplete();
       onClose();
-      setFile(null);
+      setFiles([]);
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'An error occurred during upload.');
@@ -122,7 +135,7 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
           padding: '20px 24px', borderBottom: '1px solid var(--border-default)'
         }}>
           <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
-            Upload Candidate Resume
+            Upload Candidate Resume(s)
           </h2>
           <button 
             onClick={onClose}
@@ -138,7 +151,7 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
 
         {/* Content */}
         <div style={{ padding: '24px' }}>
-          {!file ? (
+          {files.length === 0 ? (
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -156,7 +169,7 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
             >
               <Upload size={32} color={isDragging ? 'var(--accent)' : 'var(--text-faint)'} style={{ margin: '0 auto 16px' }} />
               <div style={{ fontSize: '0.9375rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: 8 }}>
-                Click or drag file to this area to upload
+                Click or drag files to this area to upload
               </div>
               <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
                 Supports PDF or DOCX (Max 10MB)
@@ -165,46 +178,68 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileSelect}
+                multiple
                 accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 style={{ display: 'none' }}
               />
             </div>
           ) : (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              padding: 16, border: '1px solid var(--border-default)',
-              borderRadius: 10, background: 'var(--bg-base)'
-            }}>
-              <div style={{
-                width: 40, height: 40, borderRadius: 8,
-                background: 'var(--accent-light)', display: 'flex',
-                alignItems: 'center', justifyContent: 'center'
-              }}>
-                <FileText size={20} color="var(--accent)" />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {file.name}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: '200px', overflowY: 'auto' }}>
+              {files.map((file, idx) => (
+                <div key={idx} style={{
+                  display: 'flex', alignItems: 'center', gap: 16,
+                  padding: 12, border: '1px solid var(--border-default)',
+                  borderRadius: 10, background: 'var(--bg-base)'
+                }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8,
+                    background: 'var(--accent-light)', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                  }}>
+                    <FileText size={16} color="var(--accent)" />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {file.name}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      {(file.size / 1024 / 1024).toFixed(2)} MB
+                    </div>
+                  </div>
+                  {!uploading && (
+                    <button
+                      onClick={() => removeFile(idx)}
+                      style={{
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        color: 'var(--text-muted)', padding: 4
+                      }}
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
-                </div>
-              </div>
+              ))}
               {!uploading && (
-                <button
-                  onClick={() => setFile(null)}
-                  style={{
-                    background: 'transparent', border: 'none', cursor: 'pointer',
-                    color: 'var(--text-muted)', padding: 4
-                  }}
+                <Button 
+                  variant="outline" 
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ marginTop: 8 }}
                 >
-                  <X size={16} />
-                </button>
+                  <Upload size={14} style={{ marginRight: 6 }} /> Add More Files
+                </Button>
               )}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                multiple
+                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                style={{ display: 'none' }}
+              />
             </div>
           )}
 
-          {!initialJobId && file && (
+          {!initialJobId && files.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: 6 }}>
                 Select Target Job Role
@@ -242,14 +277,14 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
             <Button variant="outline" onClick={onClose} disabled={uploading}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={handleUpload} disabled={!file || uploading}>
+            <Button variant="primary" onClick={handleUpload} disabled={files.length === 0 || uploading}>
               {uploading ? (
                 <>
                   <Loader2 size={16} style={{ marginRight: 8, animation: 'spin 1s linear infinite' }} />
                   Processing...
                 </>
               ) : (
-                'Upload & Process'
+                `Upload & Process ${files.length > 1 ? `(${files.length})` : ''}`
               )}
             </Button>
           </div>

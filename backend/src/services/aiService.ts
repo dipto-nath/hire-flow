@@ -1,9 +1,9 @@
 import { prisma } from '../config/database.js';
 import { env } from '../config/env.js';
-import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 
-const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY,
+const ai = new GoogleGenAI({
+  apiKey: env.GEMINI_API_KEY,
 });
 
 // ─── Type Definitions ──────────────────────────────────────────────────────────
@@ -144,21 +144,26 @@ export async function processDocument(
   // Extract candidate profile from document
   const profile = await extractCandidateProfile(text);
 
+  const updateData: any = {
+    name: profile.name,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    currentRole: profile.currentRole,
+    currentCompany: profile.currentCompany,
+    location: profile.location,
+    yearsExperience: profile.yearsExperience,
+    skills: profile.skills,
+    education: profile.education,
+  };
+
+  if (profile.email) {
+    updateData.email = profile.email;
+  }
+
   // Update candidate with extracted info
   await prisma.candidate.update({
     where: { id: candidateId },
-    data: {
-      name: profile.name,
-      firstName: profile.firstName,
-      lastName: profile.lastName,
-      email: profile.email,
-      currentRole: profile.currentRole,
-      currentCompany: profile.currentCompany,
-      location: profile.location,
-      yearsExperience: profile.yearsExperience,
-      skills: profile.skills,
-      education: profile.education,
-    },
+    data: updateData,
   });
 
   // Get job requirements
@@ -247,15 +252,17 @@ Return JSON with:
 
 If a field is not found, use empty string or 0 for yearsExperience.`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
-    temperature: 0.1,
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash',
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.1,
+    }
   });
 
-  const content = response.choices[0].message.content;
-  if (!content) throw new Error('No response from OpenAI');
+  const content = response.text;
+  if (!content) throw new Error('No response from Gemini');
 
   const parsed = JSON.parse(content);
   return {
@@ -305,15 +312,17 @@ For each requirement, determine:
 
 Return as JSON array with fields: requirementId, status, excerpt, reasoning, location`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
-    temperature: 0.2,
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash',
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.2,
+    }
   });
 
-  const content = response.choices[0].message.content;
-  if (!content) throw new Error('No response from OpenAI');
+  const content = response.text;
+  if (!content) throw new Error('No response from Gemini');
 
   const parsed = JSON.parse(content);
   return Array.isArray(parsed) ? parsed : parsed.matches || [];
@@ -381,14 +390,16 @@ Requirement gaps: ${gaps || 'None identified'}
 Write a concise overview (2-3 sentences), experience summary, skills, projects, education, domain experience, and potential gaps.
 Return JSON with: overview, experience, skills, projects, education, domainExperience, potentialGaps`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
-    temperature: 0.3,
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash',
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.3,
+    }
   });
 
-  const content = response.choices[0].message.content;
+  const content = response.text;
   if (!content) return;
 
   const summary = JSON.parse(content);
@@ -473,15 +484,17 @@ Return as JSON array with fields:
 - evidenceContext: What we already know
 - expectedEvidence: What a good answer should contain`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
-    temperature: 0.4,
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash',
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.4,
+    }
   });
 
-  const content = response.choices[0].message.content;
-  if (!content) throw new Error('No response from OpenAI');
+  const content = response.text;
+  if (!content) throw new Error('No response from Gemini');
 
   const parsed = JSON.parse(content);
   return Array.isArray(parsed) ? parsed : parsed.questions || [];
@@ -524,15 +537,17 @@ Return JSON with:
 - requirementId: "${requirementId || ''}"
 - requirementLabel: "${requirementLabel}"`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
-    temperature: 0.3,
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash',
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.3,
+    }
   });
 
-  const content = response.choices[0].message.content;
-  if (!content) throw new Error('No response from OpenAI');
+  const content = response.text;
+  if (!content) throw new Error('No response from Gemini');
 
   return JSON.parse(content);
 }
@@ -579,15 +594,17 @@ Generate a JSON object with:
 - contradictions: string[] — Any contradictions between resume and interview
 - followUpNeeded: string[] — Areas needing follow-up in future interviews`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
-    temperature: 0.3,
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash',
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.3,
+    }
   });
 
-  const synthesisContent = response.choices[0].message.content;
-  if (!synthesisContent) throw new Error('No response from OpenAI');
+  const synthesisContent = response.text;
+  if (!synthesisContent) throw new Error('No response from Gemini');
 
   return JSON.parse(synthesisContent);
 }
@@ -647,15 +664,17 @@ Generate a JSON object with:
 - additionalValidation?: string
 - recommendation?: string`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    response_format: { type: 'json_object' },
-    temperature: 0.2,
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash',
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.2,
+    }
   });
 
-  const evalContent = response.choices[0].message.content;
-  if (!evalContent) throw new Error('No response from OpenAI');
+  const evalContent = response.text;
+  if (!evalContent) throw new Error('No response from Gemini');
 
   return JSON.parse(evalContent);
 }

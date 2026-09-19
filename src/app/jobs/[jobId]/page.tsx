@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
-import { Button, Badge, Tabs, Avatar, CoverageBar, SectionHeader } from '@/components/ui';
+import { Button, Badge, Tabs, Avatar, CoverageBar, SectionHeader, UploadModal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { Job, Candidate, AuditEvent } from '@/types';
 import { formatRelativeTime, formatDate, jobStatusColor, groupLabel, groupColor, stageLabel, stageColor, evidenceStatusColor } from '@/lib/utils';
@@ -26,28 +26,30 @@ export default function JobWorkspacePage() {
   const params = useParams();
   const jobId = params.jobId as string;
   const [tab, setTab] = useState('overview');
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
   
   const [job, setJob] = useState<any>(null);
   const [candidates, setCandidates] = useState<any[]>([]);
   const [jobAudit, setJobAudit] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchJobData = async () => {
+    try {
+      const [jobData, auditRes] = await Promise.all([
+        api.jobs.get(jobId),
+        api.audit.list({ jobId, limit: 5 }),
+      ]);
+      setJob(jobData);
+      setCandidates(jobData.candidates || []);
+      setJobAudit(auditRes.events || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchJobData = async () => {
-      try {
-        const [jobData, auditRes] = await Promise.all([
-          api.jobs.get(jobId),
-          api.audit.list({ jobId, limit: 5 }),
-        ]);
-        setJob(jobData);
-        setCandidates(jobData.candidates || []);
-        setJobAudit(auditRes.events || []);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     if (jobId) fetchJobData();
   }, [jobId]);
 
@@ -119,7 +121,7 @@ export default function JobWorkspacePage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button variant="secondary" size="sm">
+            <Button variant="secondary" size="sm" onClick={() => setIsUploadOpen(true)}>
               <Upload size={14} /> Upload Candidates
             </Button>
             <Button variant="secondary" size="sm">
@@ -415,6 +417,13 @@ export default function JobWorkspacePage() {
           </div>
         )}
       </div>
+
+      <UploadModal 
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        jobId={jobId}
+        onUploadComplete={fetchJobData}
+      />
     </AppShell>
   );
 }

@@ -63,12 +63,12 @@ export const api = {
   search: {
     query: (data: { query: string; jobId?: string; limit?: number }) => fetchAPI('/api/search', { method: 'POST', body: JSON.stringify(data) }),
   },
-  upload: {
+    upload: {
     document: async (file: File, candidateId: string, type: string) => {
       const formData = new FormData();
-      formData.append('file', file);
       formData.append('candidateId', candidateId);
       formData.append('type', type);
+      formData.append('file', file);
       
       const res = await fetch(`${API_BASE}/api/upload/document`, {
         method: 'POST',
