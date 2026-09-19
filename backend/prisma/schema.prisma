@@ -1,0 +1,374 @@
+// HireFlow Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Core Enums ────────────────────────────────────────────────────────────────
+
+enum JobStatus {
+  active
+  draft
+  closed
+  paused
+}
+
+enum RequirementType {
+  required
+  preferred
+}
+
+enum RequirementCategory {
+  skill
+  experience
+  education
+  domain
+  other
+}
+
+enum CandidateStage {
+  applied
+  screening
+  interview
+  evaluation
+  decision
+}
+
+enum CandidateGroup {
+  strong_match
+  potential_match
+  needs_validation
+  insufficient_evidence
+}
+
+enum InterviewStatus {
+  scheduled
+  in_progress
+  completed
+  cancelled
+}
+
+enum EvidenceStatus {
+  verified
+  strong
+  partial
+  needs_validation
+  not_found
+}
+
+enum DocumentType {
+  resume
+  portfolio
+  application
+  interview_note
+  interview
+  other
+}
+
+enum DocumentStatus {
+  uploading
+  processing
+  ready
+  needs_review
+  failed
+}
+
+enum AuditSource {
+  resume
+  portfolio
+  application
+  interview
+  manual
+  system
+}
+
+enum GeneratedBy {
+  hireflow
+  recruiter
+}
+
+enum EvaluationRating {
+  strong_evidence
+  meets_requirements
+  partially_meets
+  needs_more_evidence
+  does_not_meet
+}
+
+enum ConfidenceLevel {
+  high
+  medium
+  low
+  none
+}
+
+enum QuestionCategory {
+  technical
+  validation
+  experience
+  project
+  behavioral
+}
+
+enum NoteType {
+  evidence
+  note
+  follow_up
+}
+// ─── Models ────────────────────────────────────────────────────────────
+
+model Job {
+  id                String          @id @default(uuid())
+  title             String
+  department        String
+  location          String
+  employmentType    String
+  experienceLevel   String
+  status            JobStatus       @default(draft)
+  description       String          @db.Text
+  candidateCount    Int             @default(0)
+  interviewCount    Int             @default(0)
+  hiringStage       String          @default("Draft")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  requirements      Requirement[]
+  candidates        Candidate[]
+  interviews        Interview[]
+  evaluations       Evaluation[]
+  auditEvents       AuditEvent[]
+
+  @@index([status])
+  @@index([department])
+}
+model Requirement {
+  id          String            @id @default(uuid())
+  jobId       String
+  job         Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  type        RequirementType
+  category    RequirementCategory
+  label       String
+  description String?           @db.Text
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  evidence    Evidence[]
+  auditEvents AuditEvent[]
+
+  @@index([jobId])
+}
+
+// Need to add requirementId to AuditEvent for the relation
+// We'll add it as optional since not all audit events are linked to requirements
+model Candidate {
+  id                  String           @id @default(uuid())
+  jobId               String
+  job                 Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  name                String
+  firstName           String
+  lastName            String
+  email               String
+  currentRole         String?
+  currentCompany      String?
+  location            String?
+  yearsExperience     Int              @default(0)
+  skills              String[]         @default([])
+  education           String?
+  stage               CandidateStage   @default(applied)
+  group               CandidateGroup   @default(insufficient_evidence)
+  groupOverridden     Boolean          @default(false)
+  requirementCoverage Int              @default(0)
+  validationNeeded    Boolean          @default(false)
+  interviewStatus     InterviewStatus?
+  addedAt             DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  documents           CandidateDocument[]
+  evidence            Evidence[]
+  interviews          Interview[]
+  auditEvents         AuditEvent[]
+  summary             CandidateSummary?
+  evaluation          Evaluation?
+
+  @@unique([jobId, email])
+  @@index([jobId])
+  @@index([stage])
+  @@index([group])
+  @@index([email])
+}
+model CandidateDocument {
+  id           String         @id @default(uuid())
+  candidateId  String
+  candidate    Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  name         String
+  type         DocumentType
+  uploadedAt   DateTime       @default(now())
+  status       DocumentStatus @default(uploading)
+  size         Int?
+  filePath     String?
+  extractedText String?       @db.Text
+
+  @@index([candidateId])
+  @@index([status])
+}
+
+model CandidateSummary {
+  id                 String   @id @default(uuid())
+  candidateId        String   @unique
+  candidate          Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  overview           String   @db.Text
+  experience         String   @db.Text
+  skills             String   @db.Text
+  projects           String   @db.Text
+  education          String   @db.Text
+  domainExperience   String   @db.Text
+  potentialGaps      String   @db.Text
+  embedding          Unsupported("vector(1536)")?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model Evidence {
+  id              String         @id @default(uuid())
+  candidateId     String
+  candidate       Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requirementId   String
+  requirement     Requirement    @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  status          EvidenceStatus
+  excerpt         String         @db.Text
+  source          DocumentType
+  sourceLabel     String
+  location        String?
+  notes           String?        @db.Text
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([candidateId])
+  @@index([requirementId])
+  @@index([status])
+  @@unique([candidateId, requirementId])
+}
+
+model Interview {
+  id            String           @id @default(uuid())
+  candidateId   String
+  candidate     Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobId         String
+  job           Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status        InterviewStatus  @default(scheduled)
+  scheduledAt   DateTime?
+  completedAt   DateTime?
+  interviewers  String[]         @default([])
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  questions     InterviewQuestion[]
+  notes         InterviewNote[]
+  summary       InterviewSummary?
+
+  @@index([candidateId])
+  @@index([jobId])
+  @@index([status])
+}
+model InterviewQuestion {
+  id                String            @id @default(uuid())
+  interviewId       String
+  interview         Interview         @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  text              String            @db.Text
+  category          QuestionCategory
+  requirementId     String?
+  requirementLabel  String?
+  whyAsk            String?           @db.Text
+  evidenceContext   String?           @db.Text
+  expectedEvidence  String?           @db.Text
+  addedToInterview  Boolean           @default(true)
+  createdAt         DateTime          @default(now())
+
+  @@index([interviewId])
+}
+
+model InterviewNote {
+  id                String      @id @default(uuid())
+  interviewId       String
+  interview         Interview   @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  questionId        String?
+  questionText      String?
+  content           String      @db.Text
+  requirementId     String?
+  requirementLabel  String?
+  flaggedForFollowUp Boolean    @default(false)
+  type              NoteType    @default(note)
+  timestamp         DateTime    @default(now())
+
+  @@index([interviewId])
+  @@index([questionId])
+}
+
+model InterviewSummary {
+  id                    String    @id @default(uuid())
+  interviewId           String    @unique
+  interview             Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  keyEvidence           String[]  @default([])
+  requirementCoverage   Json      @default("[]")
+  strongEvidence        String[]  @default([])
+  unresolvedQuestions   String[]  @default([])
+  contradictions        String[]  @default([])
+  followUpNeeded        String[]  @default([])
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+model Evaluation {
+  id                  String           @id @default(uuid())
+  candidateId         String           @unique
+  candidate           Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobId               String
+  job                 Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interviewId         String?
+  createdAt           DateTime         @default(now())
+  interviewDate       DateTime?
+  interviewers        String[]         @default([])
+  requirementRows     Json             @default("[]")
+  interviewEvidence   String           @db.Text
+  outstandingValidation String[]       @default([])
+  overallRating       EvaluationRating?
+  strengths           String?          @db.Text
+  concerns            String?          @db.Text
+  additionalValidation String?         @db.Text
+  recommendation      String?          @db.Text
+  updatedAt           DateTime         @updatedAt
+
+  @@index([candidateId])
+  @@index([jobId])
+}
+
+model AuditEvent {
+  id              String       @id @default(uuid())
+  candidateId     String
+  candidate       Candidate    @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  candidateName   String
+  jobId           String?
+  job             Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  jobTitle        String?
+  requirementId   String?
+  requirement     Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  insight         String       @db.Text
+  source          AuditSource
+  sourceLabel     String
+  generatedBy     GeneratedBy
+  generatedByUser String?
+  action          String
+  evidenceTrace   Json?
+  timestamp       DateTime     @default(now())
+
+  @@index([candidateId])
+  @@index([jobId])
+  @@index([requirementId])
+  @@index([timestamp])
+  @@index([source])
+}
