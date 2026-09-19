@@ -10,6 +10,7 @@ import { formatRelativeTime, groupLabel, groupColor, stageLabel, stageColor, evi
 import { Search, Filter, ChevronRight, ChevronDown, Users } from 'lucide-react';
 import Link from 'next/link';
 import { Candidate, CandidateGroup, CandidateStage } from '@/types';
+import { UploadModal } from '@/components/ui';
 
 const groupTabs = [
   { key: 'all', label: 'All' },
@@ -25,23 +26,25 @@ export default function JobCandidatesPage() {
   const [activeGroup, setActiveGroup] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<string>('all');
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
 
   const [job, setJob] = useState<any>(null);
   const [allCandidates, setAllCandidates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchJob = async () => {
+    try {
+      const data = await api.jobs.get(jobId);
+      setJob(data);
+      setAllCandidates(data.candidates || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchJob = async () => {
-      try {
-        const data = await api.jobs.get(jobId);
-        setJob(data);
-        setAllCandidates(data.candidates || []);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     if (jobId) fetchJob();
   }, [jobId]);
 
@@ -124,6 +127,9 @@ export default function JobCandidatesPage() {
               <option value="evaluation">Evaluation</option>
               <option value="decision">Decision</option>
             </select>
+            <Button variant="primary" onClick={() => setIsUploadOpen(true)}>
+              Upload Candidate
+            </Button>
           </div>
         </div>
 
@@ -215,6 +221,13 @@ export default function JobCandidatesPage() {
           </div>
         </div>
       </div>
+
+      <UploadModal 
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        jobId={jobId}
+        onUploadComplete={fetchJob}
+      />
     </AppShell>
   );
 }

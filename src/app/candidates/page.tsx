@@ -9,6 +9,7 @@ import { formatRelativeTime, groupLabel, groupColor, stageLabel, stageColor } fr
 import { Search, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { Candidate } from '@/types';
+import { UploadModal } from '@/components/ui';
 
 export default function CandidatesPage() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -16,18 +17,20 @@ export default function CandidatesPage() {
   const [groupFilter, setGroupFilter] = useState('all');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+
+  const fetchCandidates = async () => {
+    try {
+      const res = await api.candidates.list({ limit: 100 });
+      setCandidates(res.candidates);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCandidates = async () => {
-      try {
-        const res = await api.candidates.list({ limit: 100 });
-        setCandidates(res.candidates);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchCandidates();
   }, []);
 
@@ -50,6 +53,11 @@ export default function CandidatesPage() {
         <PageHeader
           title="Candidates"
           subtitle={loading ? 'Loading...' : `${candidates.length} candidates across all active roles`}
+          actions={
+            <Button variant="primary" onClick={() => setIsUploadOpen(true)}>
+              Upload Candidate
+            </Button>
+          }
         />
 
         {/* Filters */}
@@ -199,6 +207,12 @@ export default function CandidatesPage() {
           </div>
         </div>
       </div>
+
+      <UploadModal 
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onUploadComplete={fetchCandidates}
+      />
     </AppShell>
   );
 }

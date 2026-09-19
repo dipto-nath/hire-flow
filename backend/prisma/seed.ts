@@ -5,6 +5,10 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Starting database seed...');
 
+  // Clean up existing data to prevent duplicates
+  console.log('🧹 Clearing existing data...');
+  await prisma.job.deleteMany();
+
   // Create a sample job
   const job = await prisma.job.create({
     data: {

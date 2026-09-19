@@ -1,5 +1,9 @@
 import React from 'react';
 
+export { UploadModal } from './UploadModal';
+export { LiquidGlassCard } from './liquid-weather-glass';
+export { NeonMesh } from './neon-mesh';
+
 interface EmptyStateProps {
   icon?: React.ReactNode;
   title: string;
