@@ -6,7 +6,6 @@ import { PageHeader, Button, Badge, Avatar, SectionHeader } from '@/components/u
 import { formatDateTime, formatDate } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { Interview, Candidate, Job } from '@/types';
-import { formatDateTime, formatDate } from '@/lib/utils';
 import { CalendarCheck, Clock, CheckCircle, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 
