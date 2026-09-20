@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
+import websocket from '@fastify/websocket';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -15,6 +16,7 @@ import { searchRoutes } from './routes/search.js';
 import { auditRoutes } from './routes/audit.js';
 import { uploadRoutes } from './routes/upload.js';
 import { authRoutes } from './routes/auth.js';
+import { liveCallRoutes } from './routes/live.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -32,6 +34,8 @@ async function start() {
     origin: true,
     credentials: true,
   });
+
+  await app.register(websocket);
 
   await app.register(multipart, {
     limits: {
@@ -59,6 +63,7 @@ async function start() {
   await app.register(auditRoutes, { prefix: '/api/audit' });
   await app.register(uploadRoutes, { prefix: '/api/upload' });
   await app.register(authRoutes, { prefix: '/api/auth' });
+  await app.register(liveCallRoutes, { prefix: '/api/live' });
 
   // Global error handler
   app.setErrorHandler((error, request, reply) => {

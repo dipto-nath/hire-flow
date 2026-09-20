@@ -405,3 +405,4 @@ interface DividerProps {
 export function Divider({ style }: DividerProps) {
   return <div style={{ height: 1, background: 'var(--border-muted)', ...style }} />;
 }
+export * from './card';

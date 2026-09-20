@@ -196,11 +196,11 @@ export async function interviewRoutes(app) {
     });
     // POST /api/interviews/generate-prep - Generate prep questions
     app.post('/generate-prep', async (request, reply) => {
-        const { candidateId, jobId } = request.body;
+        const { candidateId, jobId, numQuestions } = request.body;
         if (!candidateId || !jobId)
             return reply.status(400).send({ error: 'Missing candidateId or jobId' });
         try {
-            const questions = await aiService.generateInterviewPrep(candidateId, jobId);
+            const questions = await aiService.generateInterviewPrep(candidateId, jobId, numQuestions);
             return { questions };
         }
         catch (err) {

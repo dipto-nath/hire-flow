@@ -88,6 +88,6 @@ export declare function generateFollowUp(interviewId: string, noteContent: strin
 /**
  * Generate Interview Prep Questions
  */
-export declare function generateInterviewPrep(candidateId: string, jobId: string): Promise<any[]>;
+export declare function generateInterviewPrep(candidateId: string, jobId: string, numQuestions?: number): Promise<any[]>;
 export {};
 //# sourceMappingURL=aiService.d.ts.map

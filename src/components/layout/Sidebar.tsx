@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Briefcase, Users, CalendarCheck, Search,
   BarChart3, FileText, Settings, ChevronLeft, ChevronRight,
-  Building2,
+  Building2, PhoneCall
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -18,6 +18,7 @@ const mainNav = [
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
   { href: '/candidates', label: 'Candidates', icon: Users },
   { href: '/interviews', label: 'Interviews', icon: CalendarCheck },
+  { href: '/interviews/live', label: 'Live Assessment', icon: PhoneCall },
   { href: '/search', label: 'Candidate Search', icon: Search },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/audit', label: 'Audit Trail', icon: FileText },
@@ -32,6 +33,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard' || pathname === '/';
+    if (href === '/interviews') return pathname === '/interviews';
     return pathname.startsWith(href);
   };
 
