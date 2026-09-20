@@ -1,13 +1,12 @@
 import { GoogleGenAI } from '@google/genai';
 import { env } from './src/config/env.js';
 
-const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
-
-async function main() {
-  const models = await ai.models.list();
-  for await (const model of models) {
-    console.log(model.name);
-  }
+async function test() {
+  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.5-flash-lite',
+    contents: [{text: "Hello"}]
+  });
+  console.log("Response text:", response.text);
 }
-
-main().catch(console.error);
+test();

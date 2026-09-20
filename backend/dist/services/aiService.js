@@ -7,7 +7,47 @@ const ai = new GoogleGenAI({
 });
 // ─── Helper Functions ────────────────────────────────────────────────────────────
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Global queue to enforce 12 Requests Per Minute (max 1 request every 5 seconds)
+// This keeps us safely below Gemini's 15 RPM free tier limit.
+class RequestQueue {
+    queue = [];
+    processing = false;
+    delayMs = 5000; // 5 seconds
+    async enqueue(fn) {
+        return new Promise((resolve, reject) => {
+            this.queue.push(async () => {
+                try {
+                    resolve(await fn());
+                }
+                catch (error) {
+                    reject(error);
+                }
+            });
+            if (!this.processing)
+                this.process();
+        });
+    }
+    async process() {
+        this.processing = true;
+        while (this.queue.length > 0) {
+            const fn = this.queue.shift();
+            if (fn) {
+                const start = Date.now();
+                await fn();
+                const elapsed = Date.now() - start;
+                const remainingDelay = this.delayMs - elapsed;
+                if (remainingDelay > 0) {
+                    await delay(remainingDelay);
+                }
+            }
+        }
+        this.processing = false;
+    }
+}
+const globalAiQueue = new RequestQueue();
 async function generateWithRetry(prompt, fileData, retries = 3) {
+    // Use gemini-3.6-flash for faster, cheaper processing (higher rate limits)
+    const MODEL = 'gemini-3.6-flash';
     for (let i = 0; i < retries; i++) {
         try {
             const parts = [];
@@ -21,13 +61,16 @@ async function generateWithRetry(prompt, fileData, retries = 3) {
                 });
             }
             parts.push({ text: prompt });
-            const response = await ai.models.generateContent({
-                model: 'gemini-3.5-flash',
-                contents: parts,
-                config: {
-                    responseMimeType: 'application/json',
-                    temperature: 0.2,
-                }
+            // Wrap the AI call in the global queue to throttle requests
+            const response = await globalAiQueue.enqueue(async () => {
+                return await ai.models.generateContent({
+                    model: MODEL,
+                    contents: parts,
+                    config: {
+                        responseMimeType: 'application/json',
+                        temperature: 0.2,
+                    }
+                });
             });
             const responseText = response.text;
             if (!responseText)
@@ -35,12 +78,19 @@ async function generateWithRetry(prompt, fileData, retries = 3) {
             return JSON.parse(responseText);
         }
         catch (error) {
-            console.log(`Gemini Error (attempt ${i + 1}):`, error.message);
+            console.log(`Gemini Error (attempt ${i + 1}/${retries}):`, error.message?.substring(0, 200));
             if (i === retries - 1)
                 throw error;
-            if (error.status === 429 || error.status === 503 || (error.message && error.message.includes('429'))) {
-                const waitMs = 5000 * Math.pow(2, i);
-                console.log(`Rate limited or busy. Waiting ${waitMs}ms before retry...`);
+            // Check for quota exhaustion (daily limit) - don't retry aggressively
+            const isQuotaExhausted = error.status === 429 &&
+                (error.message?.includes('quota') || error.message?.includes('Quota') || error.message?.includes('limit: 20'));
+            if (isQuotaExhausted) {
+                console.log('Daily quota exhausted. Waiting 60s before retry...');
+                await delay(60000); // Wait 1 minute instead of exponential backoff
+            }
+            else if (error.status === 429 || error.status === 503 || (error.message && error.message.includes('429'))) {
+                const waitMs = Math.min(5000 * Math.pow(2, i), 30000); // Cap at 30s
+                console.log(`Rate limited. Waiting ${waitMs}ms before retry...`);
                 await delay(waitMs);
             }
             else {

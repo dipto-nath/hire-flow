@@ -10,9 +10,9 @@ function getRandomColor() {
 export async function candidateRoutes(app) {
     // GET /api/candidates - List all candidates (with optional jobId filter)
     app.get('/', async (request) => {
-        const { jobId, stage, group, limit = 50, offset = 0 } = request.query;
-        const parsedLimit = limit ? (typeof limit === 'string' ? parseInt(limit, 10) : limit) : 50;
-        const parsedOffset = offset ? parseInt(offset, 10) : 0;
+        const { jobId, stage, group, limit = '50', offset = '0' } = request.query;
+        const parsedLimit = parseInt(limit, 10) || 50;
+        const parsedOffset = parseInt(offset, 10) || 0;
         const where = {};
         if (jobId)
             where.jobId = jobId;

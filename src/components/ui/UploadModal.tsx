@@ -27,7 +27,7 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
     isProcessing: boolean;
     queuedDocuments: Array<{ documentId: string; candidateId: string; documentType: string }>;
   } | null>(null);
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (isOpen && !initialJobId) {
@@ -45,7 +45,9 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
           
           // Stop polling when queue is empty and not processing
           if (status.queueLength === 0 && !status.isProcessing) {
-            stopPolling();
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current);
+            }
             // Give a moment for the last status to show, then auto-close
             setTimeout(() => {
               onUploadComplete();
@@ -58,21 +60,13 @@ export function UploadModal({ isOpen, onClose, jobId: initialJobId, onUploadComp
       };
       
       poll(); // Initial fetch
-      const interval = setInterval(poll, 3000); // Poll every 3 seconds
-      setPollingInterval(interval);
+      pollingIntervalRef.current = setInterval(poll, 3000); // Poll every 3 seconds
     }
     
     return () => {
-      if (pollingInterval) clearInterval(pollingInterval);
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
     };
-  }, [showQueueStatus, pollingInterval, onUploadComplete, onClose]);
-
-  const stopPolling = () => {
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      setPollingInterval(null);
-    }
-  };
+  }, [showQueueStatus, onUploadComplete, onClose]);
 
   if (!isOpen) return null;
 

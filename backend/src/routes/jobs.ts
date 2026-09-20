@@ -19,7 +19,7 @@ export async function jobRoutes(app: FastifyInstance) {
       offset?: string; 
     };
     
-    const parsedLimit = limit ? parseInt(limit, 10) : 50;
+    const parsedLimit = limit ? parseInt(limit as string, 10) : 50;
     const parsedOffset = offset ? parseInt(offset, 10) : 0;
     const where = status ? { status } : {};
     

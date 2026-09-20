@@ -92,9 +92,49 @@ interface SearchMatchReason {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Global queue to enforce 12 Requests Per Minute (max 1 request every 5 seconds)
+// This keeps us safely below Gemini's 15 RPM free tier limit.
+class RequestQueue {
+  private queue: (() => Promise<void>)[] = [];
+  private processing = false;
+  private readonly delayMs = 5000; // 5 seconds
+
+  async enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          resolve(await fn());
+        } catch (error) {
+          reject(error);
+        }
+      });
+      if (!this.processing) this.process();
+    });
+  }
+
+  private async process() {
+    this.processing = true;
+    while (this.queue.length > 0) {
+      const fn = this.queue.shift();
+      if (fn) {
+        const start = Date.now();
+        await fn();
+        const elapsed = Date.now() - start;
+        const remainingDelay = this.delayMs - elapsed;
+        if (remainingDelay > 0) {
+          await delay(remainingDelay);
+        }
+      }
+    }
+    this.processing = false;
+  }
+}
+
+const globalAiQueue = new RequestQueue();
+
 async function generateWithRetry(prompt: string, fileData?: { path: string, mimeType: string }, retries = 3): Promise<any> {
-  // Use gemini-1.5-flash-8b for faster, cheaper processing (higher rate limits)
-  const MODEL = 'gemini-1.5-flash-8b';
+  // Use gemini-3.5-flash-lite for much higher free-tier rate limits (avoids 20/day quota issues)
+  const MODEL = 'gemini-3.5-flash-lite';
   
   for (let i = 0; i < retries; i++) {
     try {
@@ -110,13 +150,16 @@ async function generateWithRetry(prompt: string, fileData?: { path: string, mime
       }
       parts.push({ text: prompt });
 
-      const response = await ai.models.generateContent({
-        model: MODEL,
-        contents: parts,
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.2,
-        }
+      // Wrap the AI call in the global queue to throttle requests
+      const response = await globalAiQueue.enqueue(async () => {
+        return await ai.models.generateContent({
+          model: MODEL,
+          contents: parts,
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          }
+        });
       });
       
       const responseText = response.text;
