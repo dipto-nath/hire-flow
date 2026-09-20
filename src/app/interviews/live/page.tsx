@@ -338,7 +338,7 @@ ${fullTranscript}`;
             {isCompleted && !isActive && (
                <Button
                  onClick={handleSaveInterview}
-                 variant="outline"
+                 variant="secondary"
                  size="sm"
                  disabled={isSaving}
                >
