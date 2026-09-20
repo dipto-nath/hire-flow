@@ -121,10 +121,17 @@ export default function LiveCallPage() {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const router = useRouter();
 
+  const fetchCandidates = async () => {
+    try {
+      const res = await api.candidates.list({ limit: 100 });
+      setCandidates(res.candidates || []);
+    } catch (err) {
+      console.error("Failed to load candidates", err);
+    }
+  };
+
   useEffect(() => {
-    api.candidates.list({ limit: 100 }).then((data: any) => {
-      setCandidates(data.candidates || []);
-    }).catch(err => console.error("Failed to load candidates", err));
+    fetchCandidates();
   }, []);
 
   useEffect(() => {
