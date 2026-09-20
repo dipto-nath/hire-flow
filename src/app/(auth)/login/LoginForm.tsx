@@ -8,6 +8,24 @@ import AnimatedGradient, { GradientConfig } from "@/components/ui/animated-gradi
 import { LiquidGlassCard } from "@/components/ui/liquid-weather-glass";
 import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight } from "lucide-react";
 
+const gradientConfig: GradientConfig = {
+  preset: "custom",
+  color1: "#ffffff", // white
+  color2: "#f3e8ff", // light purple/cream
+  color3: "#ffedd5", // light orange/cream
+  rotation: 45,
+  proportion: 50,
+  scale: 1,
+  speed: 15,
+  distortion: 20,
+  swirl: 30,
+  swirlIterations: 5,
+  softness: 80,
+  offset: 0,
+  shape: "Edge",
+  shapeSize: 20,
+};
+
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -42,24 +60,6 @@ export default function LoginForm() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const gradientConfig: GradientConfig = {
-    preset: "custom",
-    color1: "#ffffff", // white
-    color2: "#f3e8ff", // light purple/cream
-    color3: "#ffedd5", // light orange/cream
-    rotation: 45,
-    proportion: 50,
-    scale: 1,
-    speed: 15,
-    distortion: 20,
-    swirl: 30,
-    swirlIterations: 5,
-    softness: 80,
-    offset: 0,
-    shape: "Edge",
-    shapeSize: 20,
   };
 
   return (
