@@ -85,5 +85,9 @@ export declare function searchCandidates(query: string, jobId?: string, limit?: 
  * Generate follow-up questions during an interview
  */
 export declare function generateFollowUp(interviewId: string, noteContent: string, requirementLabel: string, requirementId?: string): Promise<FollowUpSuggestion>;
+/**
+ * Generate Interview Prep Questions
+ */
+export declare function generateInterviewPrep(candidateId: string, jobId: string): Promise<any[]>;
 export {};
 //# sourceMappingURL=aiService.d.ts.map

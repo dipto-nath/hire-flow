@@ -1,4 +1,5 @@
 import { prisma } from '../config/database.js';
+import * as aiService from '../services/aiService.js';
 import { createInterviewSchema, updateInterviewSchema, interviewNoteSchema, } from '../schemas/index.js';
 export async function interviewRoutes(app) {
     // GET /api/interviews - List all interviews
@@ -192,6 +193,50 @@ export async function interviewRoutes(app) {
             data: { interviewCount: { decrement: 1 } },
         });
         return { success: true };
+    });
+    // POST /api/interviews/generate-prep - Generate prep questions
+    app.post('/generate-prep', async (request, reply) => {
+        const { candidateId, jobId } = request.body;
+        if (!candidateId || !jobId)
+            return reply.status(400).send({ error: 'Missing candidateId or jobId' });
+        try {
+            const questions = await aiService.generateInterviewPrep(candidateId, jobId);
+            return { questions };
+        }
+        catch (err) {
+            console.error(err);
+            return reply.status(500).send({ error: 'Failed to generate prep questions' });
+        }
+    });
+    // POST /api/interviews/:id/generate-follow-up - Generate follow up question
+    app.post('/:id/generate-follow-up', async (request, reply) => {
+        const { id } = request.params;
+        const { noteContent, requirementLabel, requirementId } = request.body;
+        if (!noteContent || !requirementLabel)
+            return reply.status(400).send({ error: 'Missing required fields' });
+        try {
+            const followUp = await aiService.generateFollowUp(id, noteContent, requirementLabel, requirementId);
+            return followUp;
+        }
+        catch (err) {
+            console.error(err);
+            return reply.status(500).send({ error: 'Failed to generate follow up' });
+        }
+    });
+    // POST /api/interviews/:id/generate-report - Generate evaluation report
+    app.post('/:id/generate-report', async (request, reply) => {
+        const { id } = request.params;
+        const { candidateId } = request.body;
+        if (!candidateId)
+            return reply.status(400).send({ error: 'Missing candidateId' });
+        try {
+            const report = await aiService.generateEvaluationReport(candidateId, id);
+            return report;
+        }
+        catch (err) {
+            console.error(err);
+            return reply.status(500).send({ error: 'Failed to generate report' });
+        }
     });
 }
 //# sourceMappingURL=interviews.js.map

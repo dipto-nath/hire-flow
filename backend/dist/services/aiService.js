@@ -46,8 +46,8 @@ class RequestQueue {
 }
 const globalAiQueue = new RequestQueue();
 async function generateWithRetry(prompt, fileData, retries = 3) {
-    // Use gemini-3.6-flash for faster, cheaper processing (higher rate limits)
-    const MODEL = 'gemini-3.6-flash';
+    // Use gemini-3.5-flash-lite for much higher free-tier rate limits (avoids 20/day quota issues)
+    const MODEL = 'gemini-3.5-flash-lite';
     for (let i = 0; i < retries; i++) {
         try {
             const parts = [];
@@ -177,6 +177,7 @@ export async function processDocument(documentId, candidateId, jobId, filePath, 
                 notes: match.reasoning,
             },
         });
+        const req = job.requirements.find((r) => r.id === match.requirementId);
         // Create audit event
         await createAuditEvent({
             candidateId,
@@ -186,9 +187,12 @@ export async function processDocument(documentId, candidateId, jobId, filePath, 
             sourceLabel: getSourceLabel(documentType),
             action: 'Extracted evidence against requirement',
             evidenceTrace: {
-                requirementId: match.requirementId,
-                status: match.status,
+                insight: match.reasoning,
+                sourceDocument: getSourceLabel(documentType),
                 location: match.location,
+                extractedEvidence: match.excerpt,
+                reasoningContext: match.reasoning,
+                requirementLabel: req ? req.label : 'Unknown Requirement',
             },
         });
     }
@@ -488,71 +492,57 @@ export async function searchCandidates(query, jobId, limit = 10) {
             job: { select: { id: true, title: true, requirements: true } },
             evidence: { include: { requirement: true } },
         },
-        take: 100,
+        take: 100, // Evaluate up to 100 candidates
     });
-    const lowerQuery = query.toLowerCase();
-    const results = [];
-    for (const candidate of candidates) {
-        const matchReasons = [];
-        let score = 0;
-        // Skill matching
-        candidate.skills.forEach(skill => {
-            if (lowerQuery.includes(skill.toLowerCase())) {
-                matchReasons.push({ label: skill, source: 'Resume', detail: 'Listed as a primary skill' });
-                score += 25;
-            }
-        });
-        // Experience matching
-        const yearMatch = lowerQuery.match(/(\d+)\+?\s*years?/);
-        if (yearMatch) {
-            const requiredYears = parseInt(yearMatch[1]);
-            if (candidate.yearsExperience >= requiredYears) {
-                matchReasons.push({
-                    label: `${candidate.yearsExperience} years experience`,
-                    source: 'Resume',
-                    detail: `Meets the ${requiredYears}+ year requirement`,
+    if (candidates.length === 0)
+        return [];
+    const prompt = `
+You are an expert technical recruiter AI.
+Evaluate which candidates best match the user's natural language search query.
+
+Query: "${query}"
+
+Candidates:
+${candidates.map(c => `ID: ${c.id}\nName: ${c.name}\nRole: ${c.currentRole}\nCompany: ${c.currentCompany}\nExperience: ${c.yearsExperience} years\nSkills: ${c.skills.join(', ')}\nStatus: ${c.interviewStatus}`).join('\n\n')}
+
+Return ONLY a valid JSON array of objects. Do not include markdown formatting like \`\`\`json.
+Each object must have:
+- id: string
+- relevanceScore: number (0-100). Rate highly relevant candidates > 70.
+- matchReasons: array of objects with {label: string, source: string, detail: string}. Provide 1-3 reasons why they matched.
+
+Only include candidates with a relevanceScore greater than 40.
+  `;
+    try {
+        const aiResponse = await generateWithRetry(prompt);
+        // Ensure we got an array back
+        const matchedData = Array.isArray(aiResponse) ? aiResponse : [];
+        const results = [];
+        for (const match of matchedData) {
+            const candidate = candidates.find(c => c.id === match.id);
+            if (candidate && match.relevanceScore > 0) {
+                results.push({
+                    candidate,
+                    matchReasons: match.matchReasons || [],
+                    relevanceScore: match.relevanceScore
                 });
-                score += 20;
             }
         }
-        // Domain/industry matching
-        if (lowerQuery.includes('fintech') || lowerQuery.includes('finance')) {
-            const fintechCompanies = ['Zenpay', 'N26', 'Razorpay', 'Flutterwave', 'Klarna', 'Stripe', 'PayPal'];
-            if (candidate.currentCompany && fintechCompanies.some(c => candidate.currentCompany.includes(c))) {
-                matchReasons.push({ label: 'Fintech experience', source: 'Resume', detail: `Works at ${candidate.currentCompany}` });
-                score += 30;
-            }
-        }
-        // Missing requirement / validation needed
-        if (lowerQuery.includes('missing') || lowerQuery.includes('needs validation')) {
-            if (candidate.validationNeeded) {
-                matchReasons.push({ label: 'Needs validation', source: 'HireFlow Analysis', detail: 'Has unresolved requirements' });
-                score += 15;
-            }
-        }
-        // Interview status
-        if (lowerQuery.includes('interview')) {
-            if (candidate.interviewStatus === 'completed' || candidate.interviewStatus === 'scheduled') {
-                matchReasons.push({ label: `Interview ${candidate.interviewStatus}`, source: 'Interview records', detail: `Interview status: ${candidate.interviewStatus}` });
-                score += 20;
-            }
-        }
-        // Strong match bonus
-        if (candidate.group === 'strong_match')
-            score += 10;
-        if (matchReasons.length > 0 || score > 0) {
-            results.push({ candidate, matchReasons, relevanceScore: Math.min(score, 100) });
-        }
+        return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, limit);
     }
-    // If no specific matches, return some candidates
-    if (results.length === 0) {
-        return candidates.slice(0, limit).map(candidate => ({
+    catch (error) {
+        console.error('AI Search failed, falling back to basic search:', error);
+        // Fallback if AI fails (e.g. quota limit, timeout)
+        const lowerQuery = query.toLowerCase();
+        const results = candidates.filter(c => c.skills.some(s => lowerQuery.includes(s.toLowerCase())) ||
+            (c.currentRole && lowerQuery.includes(c.currentRole.toLowerCase())) ||
+            lowerQuery.includes(c.name.toLowerCase())).map(candidate => ({
             candidate,
-            matchReasons: [{ label: candidate.skills[0] ?? 'General match', source: 'Resume', detail: 'Candidate in active pool' }],
-            relevanceScore: 30,
+            matchReasons: [{ label: 'Keyword Match', source: 'Profile', detail: 'Matches search term' }],
+            relevanceScore: 50,
         }));
+        return results.slice(0, limit);
     }
-    return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, limit);
 }
 /**
  * Generate follow-up questions during an interview
@@ -586,5 +576,51 @@ Return JSON with:
 - requirementLabel: "${requirementLabel}"`;
     const parsed = await generateWithRetry(prompt);
     return parsed;
+}
+/**
+ * Generate Interview Prep Questions
+ */
+export async function generateInterviewPrep(candidateId, jobId) {
+    const candidate = await prisma.candidate.findUnique({
+        where: { id: candidateId },
+        include: {
+            evidence: { include: { requirement: true } }
+        },
+    });
+    const job = await prisma.job.findUnique({
+        where: { id: jobId },
+        include: { requirements: true }
+    });
+    if (!candidate || !job)
+        throw new Error('Candidate or Job not found');
+    const gaps = candidate.evidence.filter(e => e.status === 'not_found' || e.status === 'needs_validation');
+    const prompt = `You are an expert technical interviewer preparing a 5-question interview plan.
+Candidate: ${candidate.name}
+Job: ${job.title}
+
+Job Requirements:
+${job.requirements.map(r => `- ${r.label} (${r.type})`).join('\n')}
+
+Identified Gaps / Needs Validation:
+${gaps.map(g => `- Requirement: ${g.requirement?.label}\n  Context: ${g.excerpt}`).join('\n')}
+
+Generate exactly 5 highly targeted interview questions. Focus heavily on validating the identified gaps.
+For each question, return JSON with:
+- text: The question to ask
+- category: One of "technical", "experience", "validation", "behavioral", "project"
+- requirementId: The ID of the requirement being tested (use the closest matching requirement ID if applicable)
+- requirementLabel: The label of the requirement
+- whyAsk: Why this question is important based on the candidate's gaps or resume
+- evidenceContext: What the resume says (or is missing) about this
+- expectedEvidence: What a good answer should include
+
+Only return a valid JSON array of objects. Do not include markdown formatting.`;
+    const parsed = await generateWithRetry(prompt);
+    const questionsData = Array.isArray(parsed) ? parsed : [];
+    return questionsData.map((q) => ({
+        ...q,
+        // ensure IDs match if possible
+        requirementId: job.requirements.find(r => r.label === q.requirementLabel)?.id || null
+    }));
 }
 //# sourceMappingURL=aiService.js.map
