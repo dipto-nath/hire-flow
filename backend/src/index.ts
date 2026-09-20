@@ -54,6 +54,11 @@ async function start() {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
+  // Root route for Uptime monitors (e.g., UptimeRobot)
+  app.get('/', async () => {
+    return { name: 'HireFlow API', status: 'online' };
+  });
+
   // Register routes
   await app.register(jobRoutes, { prefix: '/api/jobs' });
   await app.register(candidateRoutes, { prefix: '/api/candidates' });
