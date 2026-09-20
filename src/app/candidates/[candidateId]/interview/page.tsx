@@ -90,60 +90,31 @@ export default function InterviewPage() {
     notes: [],
   };
 
-  const allQuestions: InterviewQuestion[] = interview.questions.length > 0
-    ? interview.questions
-    : [
-        {
-          id: 'prep-q-1',
-          text: 'Walk me through your React architecture experience. How have you structured large applications?',
-          category: 'technical',
-          requirementId: 'req-fe-1',
-          requirementLabel: 'React',
-          whyAsk: 'Validates depth of React production experience described in resume.',
-          evidenceContext: 'Resume describes React-based merchant dashboard.',
-          expectedEvidence: 'Clear architecture decisions, state management choice, rendering strategy.',
-        },
-        {
-          id: 'prep-q-2',
-          text: 'Describe your TypeScript experience in a production context.',
-          category: 'technical',
-          requirementId: 'req-fe-2',
-          requirementLabel: 'TypeScript',
-          whyAsk: 'Validates TypeScript claim in resume.',
-          evidenceContext: 'TypeScript listed as primary skill.',
-          expectedEvidence: 'Generics, strict mode, type-safe patterns.',
-        },
-        {
-          id: 'prep-q-3',
-          text: 'Tell me about a frontend performance problem you diagnosed and fixed.',
-          category: 'technical',
-          requirementId: 'req-fe-6',
-          requirementLabel: 'Performance optimization',
-          whyAsk: 'Preferred requirement. Resume mentions LCP improvement.',
-          evidenceContext: '30% LCP improvement claim in resume.',
-          expectedEvidence: 'Specific metrics, profiling tools, before/after comparison.',
-        },
-        {
-          id: 'prep-q-4',
-          text: 'You mentioned a Next.js migration. Can you describe the approach, challenges, and how you validated the outcome?',
-          category: 'validation',
-          requirementId: 'req-fe-5',
-          requirementLabel: 'Next.js',
-          whyAsk: 'Next.js mentioned in resume but needs depth validation.',
-          evidenceContext: 'Resume: "Migrated to Next.js." Interview should establish ownership level.',
-          expectedEvidence: 'ISR vs SSR decisions, routing approach, deployment considerations.',
-        },
-        {
-          id: 'prep-q-5',
-          text: 'How do you approach leading a frontend team? What processes do you put in place?',
-          category: 'experience',
-          requirementId: 'req-fe-8',
-          requirementLabel: 'Team/tech leadership',
-          whyAsk: 'Partial evidence for leadership — interview should establish scope.',
-          evidenceContext: 'Resume mentions managing 4-person team but lacks detail.',
-          expectedEvidence: 'RFC process, mentoring approach, technical decision ownership.',
-        },
-      ];
+  const [prepQuestions, setPrepQuestions] = useState<InterviewQuestion[]>([]);
+  const [isGeneratingPrep, setIsGeneratingPrep] = useState(false);
+
+  const allQuestions: InterviewQuestion[] = (baseInterview && baseInterview.questions?.length > 0)
+    ? baseInterview.questions
+    : prepQuestions;
+
+  const handleGeneratePrep = async () => {
+    setIsGeneratingPrep(true);
+    try {
+      const res = await api.interviews.generatePrep(candidateId, job.id);
+      if (res.questions) {
+        // Map API response to valid shape
+        const generated = res.questions.map((q: any, i: number) => ({
+          ...q,
+          id: `prep-q-${Date.now()}-${i}`
+        }));
+        setPrepQuestions(generated);
+      }
+    } catch (err) {
+      console.error('Failed to generate prep questions', err);
+    } finally {
+      setIsGeneratingPrep(false);
+    }
+  };
 
   const activeQ = allQuestions.find(q => q.id === activeQuestion) || allQuestions[0];
 
@@ -176,16 +147,22 @@ export default function InterviewPage() {
   };
 
   const handleGenerateFollowUp = async () => {
-    if (!activeQ) return;
+    if (!activeQ || !baseInterview || baseInterview.id === 'new') return;
     setIsGeneratingFollowUp(true);
-    await new Promise(r => setTimeout(r, 900));
-    setFollowUp({
-      question: `Can you be more specific about your ${activeQ.requirementLabel ?? 'experience'} — what was the specific challenge you encountered and how did you measure the outcome?`,
-      why: `The candidate's answer touched on the topic but lacked specific metrics or a clear methodology. This follow-up will establish whether the claim is supported by concrete evidence.`,
-      whatToValidate: 'Look for: specific numbers, tools used, approach taken, before/after comparison, and outcome. Generic answers should prompt deeper questioning.',
-    });
-    setShowFollowUp(true);
-    setIsGeneratingFollowUp(false);
+    try {
+      const res = await api.interviews.generateFollowUp(
+        baseInterview.id, 
+        noteInput, 
+        activeQ.requirementLabel || 'Experience', 
+        activeQ.requirementId
+      );
+      setFollowUp(res);
+      setShowFollowUp(true);
+    } catch (err) {
+      console.error('Failed to generate follow up', err);
+    } finally {
+      setIsGeneratingFollowUp(false);
+    }
   };
 
   const categoryColors: Record<string, string> = {
@@ -252,7 +229,18 @@ export default function InterviewPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {allQuestions.map((q, i) => {
+              {allQuestions.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 10 }}>
+                  <Lightbulb size={32} color="var(--accent)" style={{ marginBottom: 16 }} />
+                  <h3 style={{ margin: '0 0 8px', fontSize: '1rem' }}>No Interview Plan Generated</h3>
+                  <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                    Generate a personalized interview plan using HireFlow AI based on {candidate.name}'s resume gaps.
+                  </p>
+                  <Button variant="primary" onClick={handleGeneratePrep} disabled={isGeneratingPrep} style={{ margin: '0 auto' }}>
+                    {isGeneratingPrep ? 'Generating...' : 'Generate Interview Plan with AI'}
+                  </Button>
+                </div>
+              ) : allQuestions.map((q, i) => {
                 const isAdded = addedQuestions.has(q.id);
                 return (
                   <div key={q.id} style={{

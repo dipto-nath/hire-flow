@@ -755,3 +755,55 @@ Return JSON with:
   const parsed = await generateWithRetry(prompt);
   return parsed;
 }
+
+/**
+ * Generate Interview Prep Questions
+ */
+export async function generateInterviewPrep(candidateId: string, jobId: string) {
+  const candidate = await prisma.candidate.findUnique({
+    where: { id: candidateId },
+    include: {
+      evidence: { include: { requirement: true } }
+    },
+  });
+  
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    include: { requirements: true }
+  });
+
+  if (!candidate || !job) throw new Error('Candidate or Job not found');
+
+  const gaps = candidate.evidence.filter(e => e.status === 'not_found' || e.status === 'needs_validation');
+  
+  const prompt = `You are an expert technical interviewer preparing a 5-question interview plan.
+Candidate: ${candidate.name}
+Job: ${job.title}
+
+Job Requirements:
+${job.requirements.map(r => `- ${r.label} (${r.type})`).join('\n')}
+
+Identified Gaps / Needs Validation:
+${gaps.map(g => `- Requirement: ${g.requirement?.label}\n  Context: ${g.excerpt}`).join('\n')}
+
+Generate exactly 5 highly targeted interview questions. Focus heavily on validating the identified gaps.
+For each question, return JSON with:
+- text: The question to ask
+- category: One of "technical", "experience", "validation", "behavioral", "project"
+- requirementId: The ID of the requirement being tested (use the closest matching requirement ID if applicable)
+- requirementLabel: The label of the requirement
+- whyAsk: Why this question is important based on the candidate's gaps or resume
+- evidenceContext: What the resume says (or is missing) about this
+- expectedEvidence: What a good answer should include
+
+Only return a valid JSON array of objects. Do not include markdown formatting.`;
+
+  const parsed = await generateWithRetry(prompt);
+  const questionsData = Array.isArray(parsed) ? parsed : [];
+  
+  return questionsData.map((q: any) => ({
+    ...q,
+    // ensure IDs match if possible
+    requirementId: job.requirements.find(r => r.label === q.requirementLabel)?.id || null
+  }));
+}
