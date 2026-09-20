@@ -190,7 +190,7 @@ export default function LoginForm() {
           </LiquidGlassCard>
 
           <div className="mt-6 text-center text-white/40 text-xs">
-            <p>Demo credentials: admin@hireflow.com / password123</p>
+            <p>Demo credentials: admin@hireflow.com / admin</p>
           </div>
         </div>
       </div>
