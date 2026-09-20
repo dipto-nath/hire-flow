@@ -104,6 +104,67 @@ Application Deadline: 01 October 2026`,
     console.log(`✅ Created candidate: ${candidate.name}`);
   }
 
+  // Create additional jobs
+  const job2 = await prisma.job.create({
+    data: {
+      title: 'Senior Frontend Engineer',
+      department: 'Engineering',
+      location: 'Remote (US)',
+      employmentType: 'full_time',
+      experienceLevel: 'senior',
+      status: 'active',
+      description: 'Lead the development of our customer-facing product. Work closely with design and backend teams to build fast, accessible, and delightful user interfaces at scale.',
+      hiringStage: 'Technical Interview',
+      requirements: {
+        create: [
+          { type: 'required', category: 'skill', label: 'React', description: 'Production React application development' },
+          { type: 'required', category: 'skill', label: 'TypeScript', description: 'Strong TypeScript proficiency' },
+        ],
+      },
+    }
+  });
+  console.log(`✅ Created job: ${job2.title}`);
+
+  const job3 = await prisma.job.create({
+    data: {
+      title: 'Product Manager',
+      department: 'Product',
+      location: 'New York, NY',
+      employmentType: 'full_time',
+      experienceLevel: 'mid_level',
+      status: 'active',
+      description: 'Drive the product vision, strategy, and execution for our core platform. Collaborate with engineering, design, and marketing to deliver impactful features.',
+      hiringStage: 'Phone Screen',
+      requirements: {
+        create: [
+          { type: 'required', category: 'experience', label: '3+ years PM experience', description: 'Experience managing B2B SaaS products' },
+          { type: 'required', category: 'skill', label: 'Agile methodologies', description: 'Strong understanding of Scrum/Kanban' },
+        ],
+      },
+    }
+  });
+  console.log(`✅ Created job: ${job3.title}`);
+
+  const job4 = await prisma.job.create({
+    data: {
+      title: 'DevOps Engineer',
+      department: 'Infrastructure',
+      location: 'London, UK (Hybrid)',
+      employmentType: 'full_time',
+      experienceLevel: 'mid_level',
+      status: 'closed',
+      description: 'Build and maintain our CI/CD pipelines, cloud infrastructure, and monitoring systems to ensure high availability and performance.',
+      hiringStage: 'Offer',
+      requirements: {
+        create: [
+          { type: 'required', category: 'skill', label: 'AWS', description: 'Experience with core AWS services' },
+          { type: 'required', category: 'skill', label: 'Docker & Kubernetes', description: 'Containerization and orchestration' },
+        ],
+      },
+    }
+  });
+  console.log(`✅ Created job: ${job4.title}`);
+
   console.log('🎉 Database seed completed!');
 }
 
