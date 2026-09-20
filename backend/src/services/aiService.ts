@@ -336,6 +336,46 @@ export async function processDocument(
     sourceLabel: 'HireFlow Analysis',
     action: `Classified candidate as ${groupResult.group}`,
   });
+
+  // Generate and save embedding for vector search
+  try {
+    const summaryText = `Name: ${profile.name}\nRole: ${profile.currentRole}\nCompany: ${profile.currentCompany}\nExperience: ${profile.yearsExperience} years\nSkills: ${profile.skills.join(', ')}\nEducation: ${profile.education}`;
+    
+    // Create summary record if it doesn't exist
+    const summary = await prisma.candidateSummary.upsert({
+      where: { candidateId },
+      update: {
+        overview: profile.currentRole,
+        experience: String(profile.yearsExperience),
+        skills: profile.skills.join(', '),
+        projects: '',
+        education: profile.education,
+        domainExperience: '',
+        potentialGaps: '',
+      },
+      create: {
+        candidateId,
+        overview: profile.currentRole,
+        experience: String(profile.yearsExperience),
+        skills: profile.skills.join(', '),
+        projects: '',
+        education: profile.education,
+        domainExperience: '',
+        potentialGaps: '',
+      }
+    });
+
+    const embedRes = await ai.models.embedContent({
+      model: 'gemini-embedding-001',
+      contents: summaryText,
+    });
+    const embedding = embedRes.embeddings?.[0]?.values;
+    if (embedding) {
+      await prisma.$executeRaw`UPDATE "CandidateSummary" SET "embedding" = ${embedding}::vector WHERE id = ${summary.id}`;
+    }
+  } catch (error) {
+    console.error('Failed to generate embedding for candidate:', error);
+  }
 }
 
 /**
@@ -647,8 +687,52 @@ export async function searchCandidates(
   matchReasons: Array<{ label: string; source: string; detail: string }>;
   relevanceScore: number;
 }>> {
+  let matchedIds: string[] = [];
+  
+  try {
+    // 1. Embed the search query
+    const embedRes = await ai.models.embedContent({
+      model: 'gemini-embedding-001',
+      contents: query,
+    });
+    const queryEmbedding = embedRes.embeddings?.[0]?.values;
+    
+    if (queryEmbedding) {
+      // 2. Perform vector similarity search
+      // Using <=> for cosine distance (lower is closer)
+      const limitToFetch = limit * 2; // fetch a bit more for LLM filtering
+      
+      let rawResults;
+      if (jobId) {
+        rawResults = await prisma.$queryRaw`
+          SELECT s."candidateId", 1 - (s."embedding" <=> ${queryEmbedding}::vector) as similarity
+          FROM "CandidateSummary" s
+          JOIN "Candidate" c ON s."candidateId" = c.id
+          WHERE c."jobId" = ${jobId} AND s."embedding" IS NOT NULL
+          ORDER BY s."embedding" <=> ${queryEmbedding}::vector
+          LIMIT ${limitToFetch}
+        `;
+      } else {
+        rawResults = await prisma.$queryRaw`
+          SELECT s."candidateId", 1 - (s."embedding" <=> ${queryEmbedding}::vector) as similarity
+          FROM "CandidateSummary" s
+          WHERE s."embedding" IS NOT NULL
+          ORDER BY s."embedding" <=> ${queryEmbedding}::vector
+          LIMIT ${limitToFetch}
+        `;
+      }
+      
+      if (Array.isArray(rawResults)) {
+        matchedIds = rawResults.map((r: any) => r.candidateId);
+      }
+    }
+  } catch (err) {
+    console.error('Vector search failed, falling back to all candidates:', err);
+  }
+
   const where: any = {};
   if (jobId) where.jobId = jobId;
+  if (matchedIds.length > 0) where.id = { in: matchedIds };
 
   const candidates = await prisma.candidate.findMany({
     where,
@@ -656,7 +740,7 @@ export async function searchCandidates(
       job: { select: { id: true, title: true, requirements: true } },
       evidence: { include: { requirement: true } },
     },
-    take: 100, // Evaluate up to 100 candidates
+    take: 20, // Only evaluate top 20 max to save tokens
   });
 
   if (candidates.length === 0) return [];
@@ -664,6 +748,7 @@ export async function searchCandidates(
   const prompt = `
 You are an expert technical recruiter AI.
 Evaluate which candidates best match the user's natural language search query.
+We have already pre-filtered these candidates using vector search, so they are likely good matches.
 
 Query: "${query}"
 

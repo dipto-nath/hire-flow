@@ -10,7 +10,7 @@ import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/utils';
 import {
   Plus, Flag, MessageSquare, CheckSquare, ArrowRight,
-  Clock, ChevronRight, ChevronDown, X, Lightbulb,
+  Clock, ChevronRight, ChevronDown, X, Lightbulb, Mic, MicOff
 } from 'lucide-react';
 import Link from 'next/link';
 import { InterviewNote, InterviewQuestion } from '@/types';
@@ -48,6 +48,64 @@ export default function InterviewPage() {
   const [addedQuestions, setAddedQuestions] = useState<Set<string>>(new Set());
   const [isGeneratingFollowUp, setIsGeneratingFollowUp] = useState(false);
   const [mode, setMode] = useState<'prep' | 'live'>('prep');
+
+  // Web Speech API
+  const [isListening, setIsListening] = useState(false);
+  const [recognition, setRecognition] = useState<any>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
+      const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      
+      let finalTranscript = '';
+      
+      rec.onresult = (event: any) => {
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript + ' ';
+            // Auto trigger follow up generation on natural pauses (sentence ends)
+            if (finalTranscript.trim().length > 30) {
+               // setNoteInput safely handled outside to avoid circular deps
+            }
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        setNoteInput(prev => {
+          // If we had an interim, replace it with new final + interim
+          return finalTranscript + interimTranscript;
+        });
+      };
+      
+      rec.onerror = (e: any) => {
+        console.error('Speech recognition error', e);
+        setIsListening(false);
+      };
+      
+      rec.onend = () => {
+        setIsListening(false);
+        // Automatically suggest follow ups when speech stops
+        if (finalTranscript.length > 20) {
+          handleGenerateFollowUp();
+        }
+      };
+      
+      setRecognition(rec);
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognition?.stop();
+    } else {
+      recognition?.start();
+      setIsListening(true);
+    }
+  };
 
   // Initialize state once data is loaded
   useEffect(() => {
@@ -502,6 +560,15 @@ export default function InterviewPage() {
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <Button variant="primary" size="sm" onClick={handleAddNote}>
                     <Plus size={13} /> Add Note
+                  </Button>
+                  <Button 
+                    variant={isListening ? 'danger' : 'secondary'} 
+                    size="sm" 
+                    onClick={toggleListening}
+                    style={{ background: isListening ? '#fef2f2' : undefined, color: isListening ? '#dc2626' : undefined, borderColor: isListening ? '#fca5a5' : undefined }}
+                  >
+                    {isListening ? <MicOff size={13} /> : <Mic size={13} />} 
+                    {isListening ? 'Stop Listening' : 'Live Copilot'}
                   </Button>
                   <Button
                     variant="secondary"

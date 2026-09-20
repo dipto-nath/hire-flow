@@ -4,7 +4,7 @@ import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { NeonMesh } from "@/components/ui/neon-mesh";
+import AnimatedGradient, { GradientConfig } from "@/components/ui/animated-gradient";
 import { LiquidGlassCard } from "@/components/ui/liquid-weather-glass";
 import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight } from "lucide-react";
 
@@ -44,37 +44,55 @@ export default function LoginForm() {
     }
   };
 
+  const gradientConfig: GradientConfig = {
+    preset: "custom",
+    color1: "#ffffff", // white
+    color2: "#f3e8ff", // light purple/cream
+    color3: "#ffedd5", // light orange/cream
+    rotation: 45,
+    proportion: 50,
+    scale: 1,
+    speed: 15,
+    distortion: 20,
+    swirl: 30,
+    swirlIterations: 5,
+    softness: 80,
+    offset: 0,
+    shape: "Edge",
+    shapeSize: 20,
+  };
+
   return (
-    <div className="relative min-h-screen w-full bg-[#050702] overflow-hidden">
+    <div className="relative min-h-screen w-full overflow-hidden bg-gray-50">
       {/* Background Mesh */}
       <div className="absolute inset-0 z-0">
-        <NeonMesh
-          title="HireFlow"
-          subtitle="AI Recruitment Intelligence"
-          description="Sign in to access your hiring workspace"
-        />
+        <AnimatedGradient config={gradientConfig} />
       </div>
 
       {/* Foreground Form */}
       <div className="relative z-10 flex min-h-screen items-center justify-center px-4 pointer-events-none">
         <div className="w-full max-w-md pointer-events-auto">
+          <div className="mb-8 text-center">
+            <h1 className="text-4xl font-bold text-gray-900 tracking-tight">HireFlow</h1>
+            <p className="text-gray-500 mt-2 font-medium">AI Recruitment Intelligence</p>
+          </div>
           <LiquidGlassCard
             shadowIntensity="md"
             glowIntensity="sm"
             blurIntensity="xl"
             borderRadius="1.5rem"
-            className="p-8"
+            className="p-8 bg-white/40 border border-white/60 backdrop-blur-xl shadow-[0_8px_32px_0_rgba(31,38,135,0.07)]"
           >
             <div className="text-center mb-8">
-              <h2 className="text-2xl font-bold text-white mb-2">Welcome back</h2>
-              <p className="text-white/60 text-sm">
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">Welcome back</h2>
+              <p className="text-gray-500 text-sm">
                 Sign in to continue to your dashboard
               </p>
             </div>
 
             {error && (
               <div
-                className="mb-6 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-300 text-sm flex items-center gap-2"
+                className="mb-6 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2"
                 role="alert"
               >
                 <svg
@@ -98,13 +116,13 @@ export default function LoginForm() {
               <div>
                 <label
                   htmlFor="email"
-                  className="block text-white/80 text-sm font-medium mb-2"
+                  className="block text-gray-700 text-sm font-medium mb-2"
                 >
                   Email
                 </label>
                 <div className="relative">
                   <Mail
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 w-5 h-5"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5"
                     aria-hidden="true"
                   />
                   <input
@@ -116,7 +134,7 @@ export default function LoginForm() {
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     disabled={isLoading}
-                    className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#BEF202]/50 focus:border-[#BEF202] transition-all disabled:opacity-50"
+                    className="w-full pl-10 pr-4 py-3 bg-white/70 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all disabled:opacity-50"
                     placeholder="you@company.com"
                   />
                 </div>
@@ -125,13 +143,13 @@ export default function LoginForm() {
               <div>
                 <label
                   htmlFor="password"
-                  className="block text-white/80 text-sm font-medium mb-2"
+                  className="block text-gray-700 text-sm font-medium mb-2"
                 >
                   Password
                 </label>
                 <div className="relative">
                   <Lock
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 w-5 h-5"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5"
                     aria-hidden="true"
                   />
                   <input
@@ -143,13 +161,13 @@ export default function LoginForm() {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     disabled={isLoading}
-                    className="w-full pl-10 pr-12 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#BEF202]/50 focus:border-[#BEF202] transition-all disabled:opacity-50"
+                    className="w-full pl-10 pr-12 py-3 bg-white/70 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all disabled:opacity-50"
                     placeholder="••••••••"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
@@ -160,7 +178,7 @@ export default function LoginForm() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3 bg-[#BEF202] text-black font-semibold rounded-lg hover:bg-[#a8d902] focus:outline-none focus:ring-2 focus:ring-[#BEF202]/50 focus:ring-offset-2 focus:ring-offset-black/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full py-3 bg-gray-900 text-white font-semibold rounded-lg hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-900/50 focus:ring-offset-2 focus:ring-offset-white/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md"
               >
                 {isLoading ? (
                   <>
@@ -177,11 +195,11 @@ export default function LoginForm() {
             </form>
 
             <div className="mt-6 text-center">
-              <p className="text-white/50 text-sm">
+              <p className="text-gray-500 text-sm">
                 Don&apos;t have an account?{" "}
                 <Link
                   href="/register"
-                  className="text-[#BEF202] hover:text-[#a8d902] font-medium transition-colors"
+                  className="text-gray-900 hover:text-gray-700 font-medium transition-colors"
                 >
                   Create one
                 </Link>
@@ -189,7 +207,7 @@ export default function LoginForm() {
             </div>
           </LiquidGlassCard>
 
-          <div className="mt-6 text-center text-white/40 text-xs">
+          <div className="mt-6 text-center text-gray-400 text-xs font-medium">
             <p>Demo credentials: admin@hireflow.com / admin</p>
           </div>
         </div>
