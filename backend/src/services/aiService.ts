@@ -844,7 +844,7 @@ Return JSON with:
 /**
  * Generate Interview Prep Questions
  */
-export async function generateInterviewPrep(candidateId: string, jobId: string) {
+export async function generateInterviewPrep(candidateId: string, jobId: string, numQuestions: number = 5) {
   const candidate = await prisma.candidate.findUnique({
     where: { id: candidateId },
     include: {
@@ -861,7 +861,7 @@ export async function generateInterviewPrep(candidateId: string, jobId: string) 
 
   const gaps = candidate.evidence.filter(e => e.status === 'not_found' || e.status === 'needs_validation');
   
-  const prompt = `You are an expert technical interviewer preparing a 5-question interview plan.
+  const prompt = `You are an expert technical interviewer preparing a ${numQuestions}-question interview plan.
 Candidate: ${candidate.name}
 Job: ${job.title}
 
@@ -871,7 +871,7 @@ ${job.requirements.map(r => `- ${r.label} (${r.type})`).join('\n')}
 Identified Gaps / Needs Validation:
 ${gaps.map(g => `- Requirement: ${g.requirement?.label}\n  Context: ${g.excerpt}`).join('\n')}
 
-Generate exactly 5 highly targeted interview questions. Focus heavily on validating the identified gaps.
+Generate exactly ${numQuestions} highly targeted interview questions. Focus heavily on validating the identified gaps.
 For each question, return JSON with:
 - text: The question to ask
 - category: One of "technical", "experience", "validation", "behavioral", "project"

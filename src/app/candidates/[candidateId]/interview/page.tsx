@@ -10,7 +10,7 @@ import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/utils';
 import {
   Plus, Flag, MessageSquare, CheckSquare, ArrowRight,
-  Clock, ChevronRight, ChevronDown, X, Lightbulb, Mic, MicOff
+  Clock, ChevronRight, ChevronDown, X, Lightbulb
 } from 'lucide-react';
 import Link from 'next/link';
 import { InterviewNote, InterviewQuestion } from '@/types';
@@ -47,65 +47,14 @@ export default function InterviewPage() {
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [addedQuestions, setAddedQuestions] = useState<Set<string>>(new Set());
   const [isGeneratingFollowUp, setIsGeneratingFollowUp] = useState(false);
+  const [flaggedQuestions, setFlaggedQuestions] = useState<Set<string>>(new Set());
+  const [coveredRequirements, setCoveredRequirements] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<'prep' | 'live'>('prep');
-
-  // Web Speech API
-  const [isListening, setIsListening] = useState(false);
-  const [recognition, setRecognition] = useState<any>(null);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
-      const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const rec = new SpeechRecognition();
-      rec.continuous = true;
-      rec.interimResults = true;
-      
-      let finalTranscript = '';
-      
-      rec.onresult = (event: any) => {
-        let interimTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript + ' ';
-            // Auto trigger follow up generation on natural pauses (sentence ends)
-            if (finalTranscript.trim().length > 30) {
-               // setNoteInput safely handled outside to avoid circular deps
-            }
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-        setNoteInput(prev => {
-          // If we had an interim, replace it with new final + interim
-          return finalTranscript + interimTranscript;
-        });
-      };
-      
-      rec.onerror = (e: any) => {
-        console.error('Speech recognition error', e);
-        setIsListening(false);
-      };
-      
-      rec.onend = () => {
-        setIsListening(false);
-        // Automatically suggest follow ups when speech stops
-        if (finalTranscript.length > 20) {
-          handleGenerateFollowUp();
-        }
-      };
-      
-      setRecognition(rec);
-    }
-  }, []);
-
-  const toggleListening = () => {
-    if (isListening) {
-      recognition?.stop();
-    } else {
-      recognition?.start();
-      setIsListening(true);
-    }
-  };
+  const [prepQuestions, setPrepQuestions] = useState<InterviewQuestion[]>([]);
+  const [isGeneratingPrep, setIsGeneratingPrep] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [numQuestions, setNumQuestions] = useState(5);
+  const [customQuestionText, setCustomQuestionText] = useState('');
 
   // Initialize state once data is loaded
   useEffect(() => {
@@ -148,9 +97,6 @@ export default function InterviewPage() {
     notes: [],
   };
 
-  const [prepQuestions, setPrepQuestions] = useState<InterviewQuestion[]>([]);
-  const [isGeneratingPrep, setIsGeneratingPrep] = useState(false);
-
   const allQuestions: InterviewQuestion[] = (baseInterview && baseInterview.questions?.length > 0)
     ? baseInterview.questions
     : prepQuestions;
@@ -158,7 +104,7 @@ export default function InterviewPage() {
   const handleGeneratePrep = async () => {
     setIsGeneratingPrep(true);
     try {
-      const res = await api.interviews.generatePrep(candidateId, job.id);
+      const res = await api.interviews.generatePrep(candidateId, job.id, numQuestions);
       if (res.questions) {
         // Map API response to valid shape
         const generated = res.questions.map((q: any, i: number) => ({
@@ -172,6 +118,26 @@ export default function InterviewPage() {
     } finally {
       setIsGeneratingPrep(false);
     }
+  };
+
+  const handleAddCustomQuestion = () => {
+    if (!customQuestionText.trim()) return;
+    const newQ: InterviewQuestion = {
+      id: `custom-q-${Date.now()}`,
+      interviewId: 'new',
+      text: customQuestionText,
+      category: 'technical',
+      whyAsk: 'Manually added by interviewer',
+      addedToInterview: true,
+      createdAt: new Date(),
+      evidenceContext: null,
+      expectedEvidence: null,
+      requirementId: null,
+      requirementLabel: null,
+    };
+    setPrepQuestions(prev => [...prev, newQ]);
+    setAddedQuestions(prev => new Set(prev).add(newQ.id));
+    setCustomQuestionText('');
   };
 
   const activeQ = allQuestions.find(q => q.id === activeQuestion) || allQuestions[0];
@@ -204,8 +170,51 @@ export default function InterviewPage() {
     }
   };
 
+  const handleStartInterview = async () => {
+    if (baseInterview && baseInterview.id !== 'new') {
+      setMode('live');
+      return;
+    }
+    
+    setIsSaving(true);
+    try {
+      const selectedQuestions = allQuestions.filter(q => addedQuestions.has(q.id)).map(q => ({
+        text: q.text,
+        category: q.category,
+        requirementId: q.requirementId,
+        requirementLabel: q.requirementLabel,
+        whyAsk: q.whyAsk,
+        evidenceContext: q.evidenceContext,
+        expectedEvidence: q.expectedEvidence,
+        addedToInterview: true,
+      }));
+      
+      const res = await api.interviews.create({
+        candidateId,
+        jobId: job.id,
+        questions: selectedQuestions,
+        scheduledAt: new Date().toISOString()
+      });
+      
+      setBaseInterview(res);
+      setMode('live');
+    } catch (err) {
+      console.error('Failed to save interview', err);
+      alert('Failed to save interview. See console for details.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleGenerateFollowUp = async () => {
-    if (!activeQ || !baseInterview || baseInterview.id === 'new') return;
+    if (!activeQ || !baseInterview || baseInterview.id === 'new') {
+      alert("Please save or start a real interview session first to generate AI follow-ups.");
+      return;
+    }
+    if (!noteInput.trim()) {
+      alert("Please type an interview note first so the AI can generate a follow-up question based on it.");
+      return;
+    }
     setIsGeneratingFollowUp(true);
     try {
       const res = await api.interviews.generateFollowUp(
@@ -294,9 +303,20 @@ export default function InterviewPage() {
                   <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                     Generate a personalized interview plan using HireFlow AI based on {candidate.name}'s resume gaps.
                   </p>
-                  <Button variant="primary" onClick={handleGeneratePrep} disabled={isGeneratingPrep} style={{ margin: '0 auto' }}>
-                    {isGeneratingPrep ? 'Generating...' : 'Generate Interview Plan with AI'}
-                  </Button>
+                  <div style={{ display: 'flex', gap: 12, justifyContent: 'center', alignItems: 'center' }}>
+                    <select
+                      value={numQuestions}
+                      onChange={e => setNumQuestions(Number(e.target.value))}
+                      style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border-default)', fontSize: '0.875rem' }}
+                    >
+                      <option value={3}>3 Questions</option>
+                      <option value={5}>5 Questions</option>
+                      <option value={10}>10 Questions</option>
+                    </select>
+                    <Button variant="primary" onClick={handleGeneratePrep} disabled={isGeneratingPrep}>
+                      {isGeneratingPrep ? 'Generating...' : 'Generate Interview Plan with AI'}
+                    </Button>
+                  </div>
                 </div>
               ) : allQuestions.map((q, i) => {
                 const isAdded = addedQuestions.has(q.id);
@@ -392,6 +412,35 @@ export default function InterviewPage() {
                   </div>
                 );
               })}
+              {allQuestions.length > 0 && (
+                <div style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-default)',
+                  borderRadius: 10,
+                  padding: 18,
+                }}>
+                  <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem' }}>Add Custom Question</h3>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <input
+                      type="text"
+                      placeholder="Type a custom interview question..."
+                      value={customQuestionText}
+                      onChange={e => setCustomQuestionText(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleAddCustomQuestion()}
+                      style={{
+                        flex: 1,
+                        padding: '8px 12px',
+                        border: '1px solid var(--border-muted)',
+                        borderRadius: 6,
+                        fontSize: '0.875rem',
+                      }}
+                    />
+                    <Button variant="secondary" onClick={handleAddCustomQuestion}>
+                      <Plus size={14} /> Add
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Right sidebar */}
@@ -416,9 +465,10 @@ export default function InterviewPage() {
                   variant="primary"
                   size="sm"
                   style={{ marginTop: 14, width: '100%', justifyContent: 'center' }}
-                  onClick={() => setMode('live')}
+                  onClick={handleStartInterview}
+                  disabled={isSaving}
                 >
-                  Start Interview <ArrowRight size={13} />
+                  {isSaving ? 'Starting...' : 'Start Interview'} <ArrowRight size={13} />
                 </Button>
               </div>
               <div style={{
@@ -561,15 +611,6 @@ export default function InterviewPage() {
                   <Button variant="primary" size="sm" onClick={handleAddNote}>
                     <Plus size={13} /> Add Note
                   </Button>
-                  <Button 
-                    variant={isListening ? 'danger' : 'secondary'} 
-                    size="sm" 
-                    onClick={toggleListening}
-                    style={{ background: isListening ? '#fef2f2' : undefined, color: isListening ? '#dc2626' : undefined, borderColor: isListening ? '#fca5a5' : undefined }}
-                  >
-                    {isListening ? <MicOff size={13} /> : <Mic size={13} />} 
-                    {isListening ? 'Stop Listening' : 'Live Copilot'}
-                  </Button>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -579,11 +620,40 @@ export default function InterviewPage() {
                     <Lightbulb size={13} />
                     {isGeneratingFollowUp ? 'Generating...' : 'Generate Follow-up'}
                   </Button>
-                  <Button variant="ghost" size="sm">
-                    <Flag size={13} /> Flag for Follow-up
+                  <Button
+                    variant={activeQ && flaggedQuestions.has(activeQ.id) ? 'danger' : 'ghost'}
+                    size="sm"
+                    onClick={() => {
+                      if (!activeQ) return;
+                      setFlaggedQuestions(prev => {
+                        const next = new Set(prev);
+                        if (next.has(activeQ.id)) next.delete(activeQ.id);
+                        else next.add(activeQ.id);
+                        return next;
+                      });
+                    }}
+                    style={activeQ && flaggedQuestions.has(activeQ.id) ? { background: '#fef2f2', color: '#dc2626' } : {}}
+                  >
+                    <Flag size={13} /> {activeQ && flaggedQuestions.has(activeQ.id) ? 'Flagged' : 'Flag for Follow-up'}
                   </Button>
-                  <Button variant="ghost" size="sm">
-                    <CheckSquare size={13} /> Mark Requirement Covered
+                  <Button
+                    variant={activeQ?.requirementId && coveredRequirements.has(activeQ.requirementId) ? 'primary' : 'ghost'}
+                    size="sm"
+                    onClick={() => {
+                      if (!activeQ || !activeQ.requirementId) {
+                        alert('This question is not tied to a specific requirement.');
+                        return;
+                      }
+                      setCoveredRequirements(prev => {
+                        const next = new Set(prev);
+                        if (next.has(activeQ.requirementId!)) next.delete(activeQ.requirementId!);
+                        else next.add(activeQ.requirementId!);
+                        return next;
+                      });
+                    }}
+                    style={activeQ?.requirementId && coveredRequirements.has(activeQ.requirementId) ? { background: '#ecfdf5', color: '#059669', borderColor: '#a7f3d0' } : {}}
+                  >
+                    <CheckSquare size={13} /> {activeQ?.requirementId && coveredRequirements.has(activeQ.requirementId) ? 'Requirement Covered' : 'Mark Requirement Covered'}
                   </Button>
                 </div>
               </div>
