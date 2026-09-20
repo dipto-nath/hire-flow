@@ -55,6 +55,7 @@ export const api = {
     getNotes: (id: string) => fetchAPI(`/api/interviews/${id}/notes`),
     generatePrep: (candidateId: string, jobId: string) => fetchAPI('/api/interviews/generate-prep', { method: 'POST', body: JSON.stringify({ candidateId, jobId }) }),
     generateFollowUp: (id: string, noteContent: string, requirementLabel: string, requirementId?: string) => fetchAPI(`/api/interviews/${id}/generate-follow-up`, { method: 'POST', body: JSON.stringify({ noteContent, requirementLabel, requirementId }) }),
+    generateReport: (id: string, candidateId: string) => fetchAPI(`/api/interviews/${id}/generate-report`, { method: 'POST', body: JSON.stringify({ candidateId }) }),
   },
   audit: {
     list: (params?: { candidateId?: string; jobId?: string; source?: string; limit?: number; offset?: number }) => {

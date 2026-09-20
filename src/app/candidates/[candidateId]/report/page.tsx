@@ -8,7 +8,7 @@ import { Button, Badge, Avatar, SectionHeader, CoverageBar, Divider } from '@/co
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { api } from '@/lib/api';
 import { formatDate, evidenceStatusLabel } from '@/lib/utils';
-import { Edit, Save, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { Edit, Save, ArrowLeft, AlertTriangle, Lightbulb } from 'lucide-react';
 import Link from 'next/link';
 import { EvaluationRating, Evidence, EvidenceStatus, Requirement } from '@/types';
 
@@ -53,6 +53,29 @@ export default function EvaluationReportPage() {
     recommendation: '',
   });
   const [saved, setSaved] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleAutoGenerate = async () => {
+    if (!interview) return;
+    setIsGenerating(true);
+    try {
+      const report = await api.interviews.generateReport(interview.id, candidateId);
+      if (report) {
+        setAssessment(prev => ({
+          ...prev,
+          overallRating: report.overallRating || prev.overallRating,
+          strengths: report.strengths || prev.strengths,
+          concerns: report.concerns || prev.concerns,
+          additionalValidation: report.additionalValidation || prev.additionalValidation,
+          recommendation: report.recommendation || prev.recommendation,
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to generate report', err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -332,10 +355,16 @@ export default function EvaluationReportPage() {
           borderRadius: 10,
           padding: 24,
         }}>
-          <SectionHeader
-            title="Recruiter Assessment"
-            description="This section must be completed by the recruiting team. The final decision rests with the hiring manager."
-          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+            <SectionHeader
+              title="Recruiter Assessment"
+              description="This section must be completed by the recruiting team. The final decision rests with the hiring manager."
+            />
+            <Button variant="secondary" size="sm" onClick={handleAutoGenerate} disabled={isGenerating}>
+              <Lightbulb size={13} color="var(--accent)" /> 
+              {isGenerating ? 'Analyzing...' : 'Auto-Generate Draft'}
+            </Button>
+          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             {/* Overall rating */}

@@ -284,4 +284,20 @@ export async function interviewRoutes(app: FastifyInstance) {
       return reply.status(500).send({ error: 'Failed to generate follow up' });
     }
   });
+
+  // POST /api/interviews/:id/generate-report - Generate evaluation report
+  app.post('/:id/generate-report', async (request, reply) => {
+    const { id } = request.params as InterviewParams;
+    const { candidateId } = request.body as { candidateId: string };
+    
+    if (!candidateId) return reply.status(400).send({ error: 'Missing candidateId' });
+    
+    try {
+      const report = await aiService.generateEvaluationReport(candidateId, id);
+      return report;
+    } catch (err) {
+      console.error(err);
+      return reply.status(500).send({ error: 'Failed to generate report' });
+    }
+  });
 }
