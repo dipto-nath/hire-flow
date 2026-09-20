@@ -5,8 +5,10 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/index';
 import {
   Mic, MicOff, AlertTriangle, CheckCircle, Activity,
-  Radio, Zap, TrendingUp, MessageSquare, Cpu
+  Radio, Zap, TrendingUp, MessageSquare, Cpu, Save
 } from 'lucide-react';
+import { api } from '@/lib/api';
+import { useRouter } from 'next/navigation';
 
 interface LivePayload {
   transcript_chunk: string;
@@ -112,6 +114,18 @@ export default function LiveCallPage() {
   const [riskDetected, setRiskDetected] = useState<boolean>(false);
   const [language] = useState<string>('en');
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  
+  const [candidates, setCandidates] = useState<any[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<string>('');
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    api.candidates.list({ limit: 100 }).then((data: any) => {
+      setCandidates(data.candidates || []);
+    }).catch(err => console.error("Failed to load candidates", err));
+  }, []);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -224,9 +238,57 @@ export default function LiveCallPage() {
     wsRef.current?.close();
     stream?.getTracks().forEach(t => t.stop());
     setIsActive(false);
+    if (transcript.length > 0) {
+      setIsCompleted(true);
+    }
   };
 
   useEffect(() => () => { stopCall(); }, []);
+
+  const handleSaveInterview = async () => {
+    if (!selectedCandidate) return alert('Please select a candidate first');
+    
+    setIsSaving(true);
+    try {
+      const candidate = candidates.find(c => c.id === selectedCandidate);
+      if (!candidate || !candidate.jobId) throw new Error("Candidate has no job associated");
+
+      const interview = await api.interviews.create({
+        candidateId: selectedCandidate,
+        jobId: candidate.jobId,
+        scheduledAt: new Date().toISOString(),
+        questions: []
+      });
+
+      await api.interviews.update(interview.id, {
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+      });
+
+      const fullTranscript = transcript.map(t => `[${t.speaker}]: ${t.text}`).join('\n');
+      const noteContent = `### Live Interview Assessment
+**Performance Score:** ${performanceScore}/100
+
+**AI Guidance:**
+${guidance.map(g => `- ${g}`).join('\n')}
+
+**Transcript:**
+${fullTranscript}`;
+
+      await api.interviews.addNote(interview.id, {
+        content: noteContent,
+        type: 'evidence'
+      });
+
+      alert('Interview saved successfully!');
+      router.push(`/candidates/${selectedCandidate}`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to save interview: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const parsedGuidance = parseGuidance(guidance);
 
@@ -251,16 +313,51 @@ export default function LiveCallPage() {
               </p>
             </div>
           </div>
-          <Button
-            onClick={isActive ? stopCall : startCall}
-            variant={isActive ? 'danger' : 'primary'}
-            size="sm"
-          >
-            {isActive
-              ? <><MicOff size={14} style={{ marginRight: 6 }} />End Session</>
-              : <><Mic size={14} style={{ marginRight: 6 }} />Start Live Assessment</>
-            }
-          </Button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <select 
+              value={selectedCandidate}
+              onChange={e => setSelectedCandidate(e.target.value)}
+              disabled={isActive}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: '1px solid var(--border-default)',
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
+                fontSize: '0.8125rem',
+                outline: 'none',
+                cursor: isActive ? 'not-allowed' : 'pointer'
+              }}
+            >
+              <option value="">-- Select Candidate --</option>
+              {candidates.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+
+            {isCompleted && !isActive && (
+               <Button
+                 onClick={handleSaveInterview}
+                 variant="outline"
+                 size="sm"
+                 disabled={isSaving}
+               >
+                 <Save size={14} style={{ marginRight: 6 }} />
+                 {isSaving ? 'Saving...' : 'Save Interview'}
+               </Button>
+            )}
+
+            <Button
+              onClick={isActive ? stopCall : startCall}
+              variant={isActive ? 'danger' : 'primary'}
+              size="sm"
+            >
+              {isActive
+                ? <><MicOff size={14} style={{ marginRight: 6 }} />End Session</>
+                : <><Mic size={14} style={{ marginRight: 6 }} />Start Live Assessment</>
+              }
+            </Button>
+          </div>
         </div>
 
         {/* Main Grid */}
