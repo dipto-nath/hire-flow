@@ -144,6 +144,18 @@ export default function CandidateProfilePage() {
             </Badge>
           </div>
           <div style={{ flex: 1 }} />
+          {candidate.documents?.some((d: any) => d.type === 'resume') && (() => {
+            const resumeDoc = candidate.documents.find((d: any) => d.type === 'resume');
+            const fileName = resumeDoc.filePath?.split('/').pop();
+            const fileUrl = fileName ? `http://localhost:3001/uploads/${encodeURIComponent(fileName)}` : '#';
+            return (
+              <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <Button variant="secondary" size="sm">
+                  <ExternalLink size={13} /> View Resume
+                </Button>
+              </a>
+            );
+          })()}
           <Button variant="secondary" size="sm">
             <Edit size={13} /> Move Stage
           </Button>

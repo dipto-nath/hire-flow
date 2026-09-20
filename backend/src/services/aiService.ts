@@ -292,6 +292,8 @@ export async function processDocument(
       },
     });
 
+    const req = job.requirements.find((r: any) => r.id === match.requirementId);
+    
     // Create audit event
     await createAuditEvent({
       candidateId,
@@ -301,9 +303,12 @@ export async function processDocument(
       sourceLabel: getSourceLabel(documentType),
       action: 'Extracted evidence against requirement',
       evidenceTrace: {
-        requirementId: match.requirementId,
-        status: match.status,
+        insight: match.reasoning,
+        sourceDocument: getSourceLabel(documentType),
         location: match.location,
+        extractedEvidence: match.excerpt,
+        reasoningContext: match.reasoning,
+        requirementLabel: req ? req.label : 'Unknown Requirement',
       },
     });
   }
@@ -651,85 +656,63 @@ export async function searchCandidates(
       job: { select: { id: true, title: true, requirements: true } },
       evidence: { include: { requirement: true } },
     },
-    take: 100,
+    take: 100, // Evaluate up to 100 candidates
   });
 
-  const lowerQuery = query.toLowerCase();
-  const results: Array<{
-    candidate: any;
-    matchReasons: Array<{ label: string; source: string; detail: string }>;
-    relevanceScore: number;
-  }> = [];
+  if (candidates.length === 0) return [];
 
-  for (const candidate of candidates) {
-    const matchReasons: Array<{ label: string; source: string; detail: string }> = [];
-    let score = 0;
+  const prompt = `
+You are an expert technical recruiter AI.
+Evaluate which candidates best match the user's natural language search query.
 
-    // Skill matching
-    candidate.skills.forEach(skill => {
-      if (lowerQuery.includes(skill.toLowerCase())) {
-        matchReasons.push({ label: skill, source: 'Resume', detail: 'Listed as a primary skill' });
-        score += 25;
-      }
-    });
+Query: "${query}"
 
-    // Experience matching
-    const yearMatch = lowerQuery.match(/(\d+)\+?\s*years?/);
-    if (yearMatch) {
-      const requiredYears = parseInt(yearMatch[1]);
-      if (candidate.yearsExperience >= requiredYears) {
-        matchReasons.push({
-          label: `${candidate.yearsExperience} years experience`,
-          source: 'Resume',
-          detail: `Meets the ${requiredYears}+ year requirement`,
+Candidates:
+${candidates.map(c => `ID: ${c.id}\nName: ${c.name}\nRole: ${c.currentRole}\nCompany: ${c.currentCompany}\nExperience: ${c.yearsExperience} years\nSkills: ${c.skills.join(', ')}\nStatus: ${c.interviewStatus}`).join('\n\n')}
+
+Return ONLY a valid JSON array of objects. Do not include markdown formatting like \`\`\`json.
+Each object must have:
+- id: string
+- relevanceScore: number (0-100). Rate highly relevant candidates > 70.
+- matchReasons: array of objects with {label: string, source: string, detail: string}. Provide 1-3 reasons why they matched.
+
+Only include candidates with a relevanceScore greater than 40.
+  `;
+
+  try {
+    const aiResponse = await generateWithRetry(prompt);
+    
+    // Ensure we got an array back
+    const matchedData = Array.isArray(aiResponse) ? aiResponse : [];
+    
+    const results = [];
+    for (const match of matchedData) {
+      const candidate = candidates.find(c => c.id === match.id);
+      if (candidate && match.relevanceScore > 0) {
+        results.push({
+          candidate,
+          matchReasons: match.matchReasons || [],
+          relevanceScore: match.relevanceScore
         });
-        score += 20;
       }
     }
-
-    // Domain/industry matching
-    if (lowerQuery.includes('fintech') || lowerQuery.includes('finance')) {
-      const fintechCompanies = ['Zenpay', 'N26', 'Razorpay', 'Flutterwave', 'Klarna', 'Stripe', 'PayPal'];
-      if (candidate.currentCompany && fintechCompanies.some(c => candidate.currentCompany!.includes(c))) {
-        matchReasons.push({ label: 'Fintech experience', source: 'Resume', detail: `Works at ${candidate.currentCompany}` });
-        score += 30;
-      }
-    }
-
-    // Missing requirement / validation needed
-    if (lowerQuery.includes('missing') || lowerQuery.includes('needs validation')) {
-      if (candidate.validationNeeded) {
-        matchReasons.push({ label: 'Needs validation', source: 'HireFlow Analysis', detail: 'Has unresolved requirements' });
-        score += 15;
-      }
-    }
-
-    // Interview status
-    if (lowerQuery.includes('interview')) {
-      if (candidate.interviewStatus === 'completed' || candidate.interviewStatus === 'scheduled') {
-        matchReasons.push({ label: `Interview ${candidate.interviewStatus}`, source: 'Interview records', detail: `Interview status: ${candidate.interviewStatus}` });
-        score += 20;
-      }
-    }
-
-    // Strong match bonus
-    if (candidate.group === 'strong_match') score += 10;
-
-    if (matchReasons.length > 0 || score > 0) {
-      results.push({ candidate, matchReasons, relevanceScore: Math.min(score, 100) });
-    }
-  }
-
-  // If no specific matches, return some candidates
-  if (results.length === 0) {
-    return candidates.slice(0, limit).map(candidate => ({
+    
+    return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, limit);
+  } catch (error) {
+    console.error('AI Search failed, falling back to basic search:', error);
+    // Fallback if AI fails (e.g. quota limit, timeout)
+    const lowerQuery = query.toLowerCase();
+    const results = candidates.filter(c => 
+      c.skills.some(s => lowerQuery.includes(s.toLowerCase())) ||
+      (c.currentRole && lowerQuery.includes(c.currentRole.toLowerCase())) ||
+      lowerQuery.includes(c.name.toLowerCase())
+    ).map(candidate => ({
       candidate,
-      matchReasons: [{ label: candidate.skills[0] ?? 'General match', source: 'Resume', detail: 'Candidate in active pool' }],
-      relevanceScore: 30,
+      matchReasons: [{ label: 'Keyword Match', source: 'Profile', detail: 'Matches search term' }],
+      relevanceScore: 50,
     }));
+    return results.slice(0, limit);
   }
-
-  return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, limit);
 }
 
 /**
